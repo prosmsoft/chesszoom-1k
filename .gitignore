@@ -1,0 +1,7 @@
+# Assembler output files
+*.out
+*.sym
+*.lst
+*.h
+*.p
+*.wav
