@@ -64,10 +64,10 @@ wrxDriver:
         ld a,$40                        ; [ 7] 
         ld i,a                          ; [ 9] Point to RAM for WRX display
 
-        ld a,$c9                        ; [ 7] Opcode for RET
-        ld (displayRoutine + 34),a      ; [13] Set up correct exit from hi-res
+        ld hl,displayRoutine + 34       ; [10] Address of exit from hi-res
+        ld (hl),$c9                     ; [10] Patch in RET instruction
 
-        ld hl,rowTab                    ; [10] Load row table pointer
+        ld de,rowTab                    ; [10] Load row table pointer
 
                                         ;  50  T-STATES so far
 
@@ -80,9 +80,9 @@ wrxDriver:
 
 wrxLoop:
         rlc c                           ; [ 8] Get dither bit in carry
-        ld a,(hl)                       ; [ 7] Get row index from table
+        ld a,(de)                       ; [ 7] Get row index from table
         rra                             ; [ 4] Stick dither bit in MSB
-        inc hl                          ; [ 6] Move pointer to next index
+        inc de                          ; [ 6] Move pointer to next index
         ret c                           ; [ 5] --- DELAY ---
 
         call displayRoutine + $8000     ; [17] Call the WRX display routine
@@ -96,15 +96,10 @@ wrxText:
 ; 155 T-states
 ; Time spent before this label = 18 T-states
 
-        ld a,$76                        ; [ 7] Opcode for HALT
-        ld (displayRoutine + 34),a      ; [13] Set up correct exit from lo-res
+        ld (hl),$76                     ; [10] Set up correct exit from lo-res
 
-        ld b,3                          ; [ 7]
+        ld b,4                          ; [ 7]
         djnz $                          ; [34]
-        nop                             ; [ 4]
-        nop                             ; [ 4]
-        nop                             ; [ 4]
-        nop                             ; [ 4]
 
 ; Total for following set-up section = 60
         ld bc,$0108                     ; [10] 1 row, 8 lines
@@ -121,8 +116,9 @@ wrxText:
         jp $2a4                         ; [10] Exit the display driver
 
 displayRoutine:
-        ld r,a
+        ld r,a                          ; [ 9] Load R with low byte of graphics pointer
 
+        ; ZX81 character encoding of '"CHESSZOOM 1K", ZX81, PROSM 2023'
         db $0b, $28, $2d, $2a, $38, $38, $3f, $34, $34, $32, $00, $1d, $30, $0b, $1a, $00
         db $3f, $3d, $24, $1d, $1a, $00, $35, $37, $34, $38, $32, $00, $1e, $1c, $1e, $1f
 
