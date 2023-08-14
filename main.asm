@@ -52,7 +52,36 @@ cdflag  db 64
 
 ; free codeable memory
 demoLoop:
-        jr demoLoop
+        ld hl,wrxGfx
+        rrc (hl)
+        ld de,wrxGfx + 1
+        ld bc,$007f
+        ldir
+        
+        inc hl
+        inc de
+        rlc (hl)
+        ld bc,$007f
+        ldir
+
+waitFrame:
+        ld a,wrxDriver % 256            ; Address of driver for central display
+
+        cp ixl
+        jr nz,$-2                       ; Loop if we are at bottom part of display
+        cp ixl
+        jr z,$-2                        ; Loop if we are at top part of display
+
+        jr demoLoop                     ; Now at the bottom of display - loop back
+
+copyBytes:
+        
+        
+rept 30
+        ld (hl),c
+        inc l
+endm
+        ret
 
 wrxDriver:
 ; Total time from display driver entry to first display byte must be
@@ -142,6 +171,10 @@ initDemo:
         ld (hl),$00
         ldir                            ; Clear the row table
         out ($fe),a                     ; Turn on NMI generator
+        ld hl,$4300
+        ld (hl),$80
+        ld l,$80
+        ld (hl),$80
         jp demoLoop
 
 ; the display file, Code the lines needed.
