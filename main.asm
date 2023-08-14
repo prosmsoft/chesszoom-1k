@@ -10,6 +10,9 @@
 ; in LOWRES more sysvar are used, but in this way the shortest code
 ; over sysvar to start machinecode. This saves 11 bytes of BASIC
 
+wrxGfx:     equ $4300                   ; 256-byte store for graphics (8 rows, 32 byte each)
+rowTab:     equ $4248                   ; 184-byte store for row indices
+
 ; DO NOT CHANGE AFTER BASIC+3 (=DFILE)
 basic   ld h,dfile/256                  ; highbyte of dfile
         jr init1
@@ -41,17 +44,15 @@ init2   ld (basic+3),hl                 ; repair correct DFILE flagx will be set
 
 frames  dw 65535
 
-        jp gamecode                     ; YOUR ACTUAL GAMECODE, can be everywhere
+        jp initDemo                     ; YOUR ACTUAL GAMECODE, can be everywhere
         db 0,0
 
 cdflag  db 64
 ; DO NOT CHANGE SYSVAR ABOVE!
 
 ; free codeable memory
-gamecode:
-        ld ix,wrxDriver
-gameloop:
-        jr gameloop
+demoLoop:
+        jr demoLoop
 
 wrxDriver:
 ; Total time from display driver entry to first display byte must be
@@ -61,7 +62,7 @@ wrxDriver:
 ;   - Disable interrupts
 ;   - Load appropriate registers
         di                              ; [ 4] WRX needs interrupts off
-        ld a,$40                        ; [ 7] 
+        ld a,wrxGfx / 256               ; [ 7] 
         ld i,a                          ; [ 9] Point to RAM for WRX display
 
         ld hl,displayRoutine + 34       ; [10] Address of exit from hi-res
@@ -99,7 +100,7 @@ wrxText:
         ld (hl),$76                     ; [10] Set up correct exit from lo-res
 
         ld b,4                          ; [ 7]
-        djnz $                          ; [34]
+        djnz $                          ; [34] --- DELAY ---
 
 ; Total for following set-up section = 60
         ld bc,$0108                     ; [10] 1 row, 8 lines
@@ -124,9 +125,24 @@ displayRoutine:
 
         ret
 
-rowTab:
-        ds 184
+IF ($ > (rowTab - 32))
+    .ERROR "Code not allowed to exceed rowTab minus 32 stack bytes"
+ENDIF
 
+org wrxGfx
+
+initDemo:
+        out ($fd),a                     ; Turn off NMI generator
+        out ($fd),a                     ; In case NMI triggered during last instruction
+        ld sp,rowTab                    ; Build stack downwards from row table
+        ld ix,wrxDriver                 ; Set up pointer to our hi-res driver
+        ld hl,rowTab
+        ld de,rowTab + 1
+        ld bc,184 - 1
+        ld (hl),$00
+        ldir                            ; Clear the row table
+        out ($fe),a                     ; Turn on NMI generator
+        jp demoLoop
 
 ; the display file, Code the lines needed.
 dfile:   
@@ -135,4 +151,5 @@ dfile:
     
 vars    db 128
 last    equ $       
+
 
