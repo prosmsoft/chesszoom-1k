@@ -1,6 +1,8 @@
 ; CHESSZOOM 1K, for the 1K ZX81
 ; File derived from Dr. Beep's optimal lowres ZX81 machine code template
 
+; N.B. Lines marked (SMC) are self-modifying code
+
 ; Gamecoding course ZX81 machinecode
 ; Base model for optimal ZX81 code in lowres 
 ; 12 bytes from #4000 to #400B free reuseble for own "variables"
@@ -12,7 +14,8 @@
 
 wrxGfx:     equ $4300                   ; 256-byte store for graphics (8 rows, 32 byte each)
 rowTab:     equ $4248                   ; 184-byte store for row indices
-stackPtr:   equ $4025                   ; 37-byte stack
+stackPtr:   equ $4025                   ; 29-byte stack
+edgeTab:    equ $4000                   ; 8-byte edge table
 
 ; DO NOT CHANGE AFTER BASIC+3 (=DFILE)
 basic   ld h,dfile/256                  ; highbyte of dfile
@@ -75,14 +78,31 @@ waitFrame:
 
         jr demoLoop                     ; Now at the bottom of display - loop back
 
+
+
 copyBytes:
-        
-        
+        cp 30                           ; Is this over the copy length limit?
+        jr nc,copyBytesNoCheck          ; Skip following if not
+
+        sub 30
+        call copyBytes
+        ld a,30                         ; Fall through and execute original copy
+
+copyBytesNoCheck:
+        add a,a                         ; Double run length
+        cpl
+        add a,59                        ; Equivalent to subtracting from 60
+        ld (copyBytesJump+1),a          ; Store offset
+
+copyBytesJump:
+        jr $                            ; Jump into appropriate part (SMC)
 rept 30
         ld (hl),b
         inc l
 endm
         ret
+
+
 
 wrxDriver:
 ; Total time from display driver entry to first display byte must be
@@ -153,11 +173,14 @@ displayRoutine:
         db $0b, $28, $2d, $2a, $38, $38, $3f, $34, $34, $32, $00, $1d, $30, $0b, $1a, $00
         db $3f, $3d, $24, $1d, $1a, $00, $35, $37, $34, $38, $32, $00, $1e, $1c, $1e, $1f
 
-        ret
+        ret                             ; Exit from displayRoutine (SMC)
 
-IF ($ > (rowTab - 32))
-    .ERROR "Code not allowed to exceed rowTab minus 32 stack bytes"
+IF ($ > rowTab)
+    .ERROR "Code not allowed to exceed rowTab"
 ENDIF
+
+org rowTab
+        db $f0
 
 org wrxGfx
 
@@ -173,6 +196,11 @@ initDemo:
         ld (hl),$00
         ldir                            ; Clear the row table
 
+        ld hl,edgeTabTop
+        ld de,edgeTab
+        ld c,8
+        ldir                            ; Copy the edge table to its lower location
+
         out ($fe),a                     ; Turn on NMI generator
         ld hl,$4300
         ld (hl),$80
@@ -181,8 +209,12 @@ initDemo:
 
         jp demoLoop
 
+edgeTabTop:
+        db $7f, $3f, $1f, $0f, $07, $03, $01, $00
+
 ; the display file, Code the lines needed.
-dfile:   
+dfile:  
+        halt
 ; this byte fills the unused part of the screen
         jp (hl)
     
