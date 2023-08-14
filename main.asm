@@ -12,6 +12,7 @@
 
 wrxGfx:     equ $4300                   ; 256-byte store for graphics (8 rows, 32 byte each)
 rowTab:     equ $4248                   ; 184-byte store for row indices
+stackPtr:   equ $4025                   ; 37-byte stack
 
 ; DO NOT CHANGE AFTER BASIC+3 (=DFILE)
 basic   ld h,dfile/256                  ; highbyte of dfile
@@ -78,7 +79,7 @@ copyBytes:
         
         
 rept 30
-        ld (hl),c
+        ld (hl),b
         inc l
 endm
         ret
@@ -94,7 +95,7 @@ wrxDriver:
         ld a,wrxGfx / 256               ; [ 7] 
         ld i,a                          ; [ 9] Point to RAM for WRX display
 
-        ld hl,displayRoutine + 34       ; [10] Address of exit from hi-res
+        ld hl,displayRoutine + $22      ; [10] Address of exit from hi-res
         ld (hl),$c9                     ; [10] Patch in RET instruction
 
         ld de,rowTab                    ; [10] Load row table pointer
@@ -129,7 +130,7 @@ wrxText:
         ld (hl),$76                     ; [10] Set up correct exit from lo-res
 
         ld b,5                          ; [ 7]
-        djnz $                          ; [34] --- DELAY ---
+        djnz $                          ; [60] --- DELAY ---
 
 ; Total for following set-up section = 60
         ld bc,$0108                     ; [10] 1 row, 8 lines
@@ -163,18 +164,21 @@ org wrxGfx
 initDemo:
         out ($fd),a                     ; Turn off NMI generator
         out ($fd),a                     ; In case NMI triggered during last instruction
-        ld sp,rowTab                    ; Build stack downwards from row table
+        ld sp,stackPtr                  ; Build stack downwards from row table
         ld ix,wrxDriver                 ; Set up pointer to our hi-res driver
+
         ld hl,rowTab
         ld de,rowTab + 1
         ld bc,184 - 1
         ld (hl),$00
         ldir                            ; Clear the row table
+
         out ($fe),a                     ; Turn on NMI generator
         ld hl,$4300
         ld (hl),$80
         ld l,$80
         ld (hl),$80
+
         jp demoLoop
 
 ; the display file, Code the lines needed.
