@@ -99,7 +99,7 @@ wrxText:
 
         ld (hl),$76                     ; [10] Set up correct exit from lo-res
 
-        ld b,4                          ; [ 7]
+        ld b,5                          ; [ 7]
         djnz $                          ; [34] --- DELAY ---
 
 ; Total for following set-up section = 60
