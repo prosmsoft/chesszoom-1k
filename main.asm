@@ -14,12 +14,11 @@
 
 copyByteSize: equ 30                    ; Must be AT LEAST 30 bytes (for row drawing routines)
 
-wrxGfx:         equ $4300               ; 256-byte store for graphics (8 rows, 32 byte each)
-rowTab:         equ $4248               ; 184-byte store for row indices
+wrxGfx:         equ $4380               ; 256-byte store for graphics (8 rows, 32 byte each)
+rowTab:         equ $4360               ; 184-byte store for row indices
 stackPtr:       equ $4025               ; 29-byte stack
 edgeTab:        equ $4000               ; 8-byte edge table
-textureByte:    equ $4008
-textureByteOff: equ $08
+frameOffset:    equ $08
 
 ; DO NOT CHANGE AFTER BASIC+3 (=DFILE)
 basic   ld h,dfile/256                  ; highbyte of dfile
@@ -60,73 +59,38 @@ cdflag  db 64
 
 ; free codeable memory
 demoLoop:
-;       ld hl,wrxGfx
-;       rrc (hl)
-;       ld de,wrxGfx + 1
-;       ld bc,$007f
-;       ldir
-        
-;       inc hl
-;       inc de
-;       rlc (hl)
-;       ld bc,$007f
-;       ldir
-
-        ld a,(xPos)
+        ld a,(xPos + 1)
         inc a
         and $0f
-        ld (xPos),a
-        ld h,a
+        ld (xPos + 1),a
 
-        ld a,$aa
-        ld (renderLineTextureSwap + 1),a
-        ld (renderLineTextureLoad + 1),a
-        ld a,$00
-        ld l,0
+        ld bc,$aa80
+        ld a,b
+        ld hl,(xPos)
         ld de,$2300
         call renderLine
 
-        ld a,(xPos)
-        ld h,a
-
-        ld a,$aa
-        ld (renderLineTextureSwap + 1),a
-        ld (renderLineTextureLoad + 1),a
-        ld a,$20
-        ld l,$00
+        ld bc,$aac0
+        xor a
+        ld hl,(xPos)
         ld de,$2300
         call renderLine
 
-        ld a,(xPos)
-        ld h,a
-
-        ld a,$55
-        ld (renderLineTextureSwap + 1),a
-        ld (renderLineTextureLoad + 1),a
-        ld a,$80
-        ld l,$00
+        ld bc,$55a0
+        ld a,b
+        ld hl,(xPos)
         ld de,$2300
         call renderLine
 
-        ld a,(xPos)
-        ld h,a
-
-        ld a,$55
-        ld (renderLineTextureSwap + 1),a
-        ld (renderLineTextureLoad + 1),a
-        ld a,$80
-        ld l,$00
+        ld bc,$55e0
+        xor a
+        ld hl,(xPos)
         ld de,$2300
         call renderLine
 
-        ld a,(xPos)
-        ld h,a
-
-        ld a,$55
-        ld (renderLineTextureSwap + 1),a
-        ld (renderLineTextureLoad + 1),a
-        ld a,$80
-        ld l,$00
+        ld a,$ff
+        ld bc,$ff60
+        ld hl,(xPos)
         ld de,$2300
         call renderLine
 
@@ -147,14 +111,19 @@ waitFrame:
         jp demoLoop                     ; Just hit bottom of display - loop back
 
 xPos:
-        db 0
+        dw 0
 
 
 
 renderLine:
 ; NOTE - PUT START HERE
+        ld (renderLineTextureLoad + 1),a
+        ld a,b
+        ld (renderLineTextureSwap + 1),a
+
         ; Map set initialisation
         ld b,$40
+        ld a,c
 
         exx
         ; Line set initialisation
@@ -282,33 +251,118 @@ wrxDriver:
 ; Tasks to carry out during initialisation include:
 ;   - Disable interrupts
 ;   - Load appropriate registers
+; TODO: Consider moving LD HL to top, then LD A,nn to LD A,H
         di                              ; [ 4] WRX needs interrupts off
         ld a,wrxGfx / 256               ; [ 7] 
         ld i,a                          ; [ 9] Point to RAM for WRX display
 
-        ld hl,displayRoutine + $22      ; [10] Address of exit from hi-res
-        ld (hl),$c9                     ; [10] Patch in RET instruction
+        ld a,$c9                        ; [ 7]
+        ld (displayRoutine + $22),a     ; [13] Patch in RET instruction
 
-        ld de,rowTab                    ; [10] Load row table pointer
+        ld hl,rowTab - 1                ; [10] Load row table pointer
+        inc hl                          ; [ 6] --- DELAY ---
 
                                         ;  50  T-STATES so far
 
-        ld b,4                          ; [ 7]
-        djnz $                          ; [47]
+        ld b,$03                        ; [ 7]
+        djnz $                          ; [34]
         nop                             ; [ 4] --- DELAY ---
 
-        ld bc,$b8aa                     ; [10] B holds number of rows (184)
-                                        ;      C holds dither offset pattern
+        ld b,$17                        ; [ 7] 23 rows of 8 pixels
+        ld de,$8202                     ; [10] TODO: COMMENT THIS
 
 wrxLoop:
-        rlc c                           ; [ 8] Get dither bit in carry
-        ld a,(de)                       ; [ 7] Get row index from table
-        rra                             ; [ 4] Stick dither bit in MSB
-        inc de                          ; [ 6] Move pointer to next index
-        ret c                           ; [ 5] --- DELAY ---
+        ld c,(hl)                       ; [ 7] Get first display byte
+        ld a,$02                        ; [ 7] A holds d0000010
+        rlc c                           ; [ 8] Get next bit off line
+        rra                             ; [ 4] A holds fd000001
+        rrca                            ; [ 4] A holds 1fd00000
+                                        ;  30  T-STATES since loop label
 
         call displayRoutine + $8000     ; [17] Call the WRX display routine
+                                        ; 147  T-STATES spent in displayRoutine
 
+        dec (hl)                        ; [11]
+        inc hl                          ; [ 6]
+        dec hl                          ; [ 6] --- DELAY ---
+
+        ld a,d                          ; [ 4] A holds d0000010
+        rlc c                           ; [ 8] Get next bit off line
+        rra                             ; [ 4] A holds fd000001
+        rrca                            ; [ 4] A holds 1fd00000
+
+        call displayRoutine + $8000     ; [17] Call the WRX display routine
+                                        ; 147  T-STATES spent in displayRoutine
+
+        inc (hl)                        ; [11]
+        inc hl                          ; [ 6]
+        dec hl                          ; [ 6] --- DELAY ---
+
+        ld a,e                          ; [ 4] A holds d0000010
+        rlc c                           ; [ 8] Get next bit off line
+        rra                             ; [ 4] A holds fd000001
+        rrca                            ; [ 4] A holds 1fd00000
+
+        call displayRoutine + $8000     ; [17] Call the WRX display routine
+                                        ; 147  T-STATES spent in displayRoutine
+
+        dec (hl)                        ; [11]
+        inc hl                          ; [ 6]
+        dec hl                          ; [ 6] --- DELAY ---
+
+        ld a,d                          ; [ 4] A holds d0000010
+        rlc c                           ; [ 8] Get next bit off line
+        rra                             ; [ 4] A holds fd000001
+        rrca                            ; [ 4] A holds 1fd00000
+
+        call displayRoutine + $8000     ; [17] Call the WRX display routine
+                                        ; 147  T-STATES spent in displayRoutine
+
+        inc (hl)                        ; [11]
+        inc hl                          ; [ 6]
+        dec hl                          ; [ 6] --- DELAY ---
+
+        ld a,e                          ; [ 4] A holds d0000010
+        rlc c                           ; [ 8] Get next bit off line
+        rra                             ; [ 4] A holds fd000001
+        rrca                            ; [ 4] A holds 1fd00000
+
+        call displayRoutine + $8000     ; [17] Call the WRX display routine
+                                        ; 147  T-STATES spent in displayRoutine
+
+        dec (hl)                        ; [11]
+        inc hl                          ; [ 6]
+        dec hl                          ; [ 6] --- DELAY ---
+
+        ld a,d                          ; [ 4] A holds d0000010
+        rlc c                           ; [ 8] Get next bit off line
+        rra                             ; [ 4] A holds fd000001
+        rrca                            ; [ 4] A holds 1fd00000
+
+        call displayRoutine + $8000     ; [17] Call the WRX display routine
+                                        ; 147  T-STATES spent in displayRoutine
+
+        inc (hl)                        ; [11]
+        inc hl                          ; [ 6]
+        dec hl                          ; [ 6] --- DELAY ---
+
+        ld a,e                          ; [ 4] A holds d0000010
+        rlc c                           ; [ 8] Get next bit off line
+        rra                             ; [ 4] A holds fd000001
+        rrca                            ; [ 4] A holds 1fd00000
+
+        call displayRoutine + $8000     ; [17] Call the WRX display routine
+                                        ; 147  T-STATES spent in displayRoutine
+
+        ld a,(iy + 0)                   ; [19] --- DELAY ---
+
+        inc l                           ; [ 4] Move to next byte of line
+        ld a,d                          ; [ 4] A holds d0000010
+        rlc c                           ; [ 8] Get next bit off line
+        rra                             ; [ 4] A holds fd000001
+        rrca                            ; [ 4] A holds 1fd00000
+
+        call displayRoutine + $8000     ; [17] Call the WRX display routine
                                         ; 147  T-STATES spent in displayRoutine
 
         djnz wrxLoop                    ; [13] Loop if there are rows left
@@ -318,10 +372,13 @@ wrxText:
 ; 155 T-states
 ; Time spent before this label = 18 T-states
 
-        ld (hl),$76                     ; [10] Set up correct exit from lo-res
+        ld a,$76                        ; [ 7] 
+        ld (displayRoutine + $22),a     ; [13] Patch in HALT instruction
+        dec (iy + frameOffset)          ; [23] Decrement FRAMES counter
 
-        ld b,5                          ; [ 7]
-        djnz $                          ; [60] --- DELAY ---
+        ld b,2                          ; [ 7]
+        djnz $                          ; [21]
+        dec hl                          ; [ 6] --- DELAY ---
 
 ; Total for following set-up section = 60
         ld bc,$0108                     ; [10] 1 row, 8 lines
@@ -330,6 +387,7 @@ wrxText:
         ld i,a                          ; [ 9] Point to our ROM character set
         ld a,$f5                        ; [ 7] SLOW mode timing value for R
         call $2b5                       ; [17] Generate the text with the ROM display driver
+
         call $292                       ; [17] Exit the display driver
 
 ; V-sync
@@ -353,11 +411,6 @@ IF ($ > rowTab)
 ENDIF
 
 org rowTab
-        db $f0
-
-
-
-org wrxGfx
 
 initDemo:
 ; Since this code is only run once, I've kept it in the graphics buffer, since
