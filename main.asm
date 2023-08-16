@@ -12,10 +12,14 @@
 ; in LOWRES more sysvar are used, but in this way the shortest code
 ; over sysvar to start machinecode. This saves 11 bytes of BASIC
 
-wrxGfx:     equ $4300                   ; 256-byte store for graphics (8 rows, 32 byte each)
-rowTab:     equ $4248                   ; 184-byte store for row indices
-stackPtr:   equ $4025                   ; 29-byte stack
-edgeTab:    equ $4000                   ; 8-byte edge table
+copyByteSize: equ 30                    ; Must be AT LEAST 30 bytes (for row drawing routines)
+
+wrxGfx:         equ $4300               ; 256-byte store for graphics (8 rows, 32 byte each)
+rowTab:         equ $4248               ; 184-byte store for row indices
+stackPtr:       equ $4025               ; 29-byte stack
+edgeTab:        equ $4000               ; 8-byte edge table
+textureByte:    equ $4008
+textureByteOff: equ $08
 
 ; DO NOT CHANGE AFTER BASIC+3 (=DFILE)
 basic   ld h,dfile/256                  ; highbyte of dfile
@@ -56,17 +60,42 @@ cdflag  db 64
 
 ; free codeable memory
 demoLoop:
-        ld hl,wrxGfx
-        rrc (hl)
-        ld de,wrxGfx + 1
-        ld bc,$007f
-        ldir
+;       ld hl,wrxGfx
+;       rrc (hl)
+;       ld de,wrxGfx + 1
+;       ld bc,$007f
+;       ldir
         
-        inc hl
-        inc de
-        rlc (hl)
-        ld bc,$007f
-        ldir
+;       inc hl
+;       inc de
+;       rlc (hl)
+;       ld bc,$007f
+;       ldir
+
+        ld a,(xPos)
+        inc a
+        and $0f
+        ld (xPos),a
+        ld h,a
+
+        ld a,$aa
+        ld (renderLineTextureSwap + 1),a
+        ld (renderLineTextureLoad + 1),a
+        ld a,$00
+        ld l,0
+        ld de,$2600
+        call renderLine
+
+        ld a,(xPos)
+        ld h,a
+
+        ld a,$55
+        ld (renderLineTextureSwap + 1),a
+        ld (renderLineTextureLoad + 1),a
+        ld a,$80
+        ld l,$00
+        ld de,$2600
+        call renderLine
 
 waitFrame:
         ld a,wrxDriver % 256            ; Address of driver for central display
@@ -76,23 +105,24 @@ waitFrame:
         cp ixl
         jr z,$-2                        ; Loop if we are at top part of display
 
-        jr demoLoop                     ; Now at the bottom of display - loop back
+        jr demoLoop                     ; Just hit bottom of display - loop back
 
-
+xPos:
+        db 0
 
 copyBytes:
-        cp 30                           ; Is this over the copy length limit?
-        jr nc,copyBytesNoCheck          ; Skip following if not
+        cp copyByteSize                 ; Is this over the copy length limit?
+        jp nc,copyBytesNoCheck          ; Skip following if not
 
-        sub 30
+        sub copyByteSize
         call copyBytes
-        ld a,30                         ; Fall through and execute original copy
+        ld a,copyByteSize               ; Fall through and execute original copy
 
 copyBytesNoCheck:
         add a,a                         ; Double run length
         cpl
-        add a,59                        ; Equivalent to subtracting from 60
-        ld (copyBytesJump+1),a          ; Store offset
+        add a,(copyByteSize * 2) - 1    ; Equivalent to subtracting from copyByteSize * 2
+        ld (copyBytesJump + 1),a        ; Store offset
 
 copyBytesJump:
         jr $                            ; Jump into appropriate part (SMC)
@@ -101,6 +131,125 @@ rept 30
         inc l
 endm
         ret
+
+
+
+renderLine:
+; NOTE - PUT START HERE
+        ; Map set initialisation
+        ld b,$40
+
+        exx
+        ; Line set initialisation
+        ld de,$02ff                     ; D holds initial left edge + 2,
+                                        ; E holds initial mask
+        ld h,$43
+        ld l,a
+
+        ld (hl),0
+        exx
+renderLineLoop:
+        ld a,h
+        and 7
+        ld c,a                          ; Form address to edge table
+        ld a,h                          ; Copy right edge integer part
+
+        exx                             ; LINE SET =============================
+        
+        ld c,a                          ; Make temp. copy of X
+        rrca
+        rrca
+        rrca
+        and 31                          ; Get byte-wise position
+
+        ld b,a
+        inc b                           ; This will set the carry flag for lines
+        inc b                           ; with no run of bytes in the middle
+
+        sub d
+        ld d,b
+
+renderLineTextureLoad:
+        ld b,$00                        ; Load texture byte (SMC)
+        jr c,renderLineEdge             ; Jump ahead for edge handling
+
+        push af
+        ld a,e
+        and b
+        or (hl)
+        ld (hl),a
+        inc l
+        pop af
+
+        call copyBytesNoCheck
+        
+        exx                             ; MAP SET ==============================
+        ld a,(bc)
+        exx                             ; LINE SET =============================
+        ld e,a
+        cpl
+        and b
+        ld (hl),a
+
+renderLineEndRun:
+; Texture swap here! XOR against old byte?
+        ld a,b
+renderLineTextureSwap:
+        xor $00                         ; (SMC)
+        ld (renderLineTextureLoad + 1),a
+
+        exx                             ; MAP SET ==============================
+
+        ld a,255
+        cp h                            ; End of line?
+        ret z                           ; Return if so
+
+        add hl,de
+        jp nc,renderLineLoop
+        
+        ld h,a
+        jr renderLineLoop
+
+renderLineEdge:
+; This branch handles lines made up of only two edges (9 - 16px)
+        inc a                           ; Just a single edge?
+        jr nz,renderLineEdgeSingle
+
+; This is a double edge situation
+;       ld a,e                          ; Get old mask
+;       and b                           ; AND against texture byte
+;       or (hl)                         ; OR to the buffer
+;       ld (hl),a                       ; Store back in buffer
+; The commented code is included in the below call
+
+        call renderLineEdgeCore
+
+        inc l
+
+renderLineEdgeLeft:
+        exx                             ; MAP SET ==============================
+        ld a,(bc)                       ; Get new mask
+        exx                             ; LINE SET =============================
+
+        ld e,a                          ; Store new mask
+        cpl                             ; Invert mask
+        and b                           ; AND against graphic
+        ld (hl),a                       ; Load into buffer
+
+        jr renderLineEndRun
+
+renderLineEdgeSingle:
+        inc c
+        jr nz,renderLineEdgeLeft        ; Branch if edge on left hand side
+
+renderLineEdgeCore:
+; Possibility - hide this in BASIC system variables if memory gets tight?
+        ld a,e                          ; Get old mask
+        and b                           ; AND against texture byte
+        or (hl)                         ; OR to the buffer
+        ld (hl),a                       ; Store back in buffer
+        
+        ret                             ; We're at the end of the line
 
 
 
@@ -175,6 +324,8 @@ displayRoutine:
 
         ret                             ; Exit from displayRoutine (SMC)
 
+
+
 IF ($ > rowTab)
     .ERROR "Code not allowed to exceed rowTab"
 ENDIF
@@ -182,9 +333,13 @@ ENDIF
 org rowTab
         db $f0
 
+
+
 org wrxGfx
 
 initDemo:
+; Since this code is only run once, I've kept it in the graphics buffer, since
+; it can be destroyed without consequence following execution
         out ($fd),a                     ; Turn off NMI generator
         out ($fd),a                     ; In case NMI triggered during last instruction
         ld sp,stackPtr                  ; Build stack downwards from row table
@@ -220,5 +375,4 @@ dfile:
     
 vars    db 128
 last    equ $       
-
 
