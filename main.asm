@@ -83,7 +83,18 @@ demoLoop:
         ld (renderLineTextureLoad + 1),a
         ld a,$00
         ld l,0
-        ld de,$2600
+        ld de,$2300
+        call renderLine
+
+        ld a,(xPos)
+        ld h,a
+
+        ld a,$aa
+        ld (renderLineTextureSwap + 1),a
+        ld (renderLineTextureLoad + 1),a
+        ld a,$20
+        ld l,$00
+        ld de,$2300
         call renderLine
 
         ld a,(xPos)
@@ -94,7 +105,29 @@ demoLoop:
         ld (renderLineTextureLoad + 1),a
         ld a,$80
         ld l,$00
-        ld de,$2600
+        ld de,$2300
+        call renderLine
+
+        ld a,(xPos)
+        ld h,a
+
+        ld a,$55
+        ld (renderLineTextureSwap + 1),a
+        ld (renderLineTextureLoad + 1),a
+        ld a,$80
+        ld l,$00
+        ld de,$2300
+        call renderLine
+
+        ld a,(xPos)
+        ld h,a
+
+        ld a,$55
+        ld (renderLineTextureSwap + 1),a
+        ld (renderLineTextureLoad + 1),a
+        ld a,$80
+        ld l,$00
+        ld de,$2300
         call renderLine
 
 waitFrame:
@@ -109,28 +142,6 @@ waitFrame:
 
 xPos:
         db 0
-
-copyBytes:
-        cp copyByteSize                 ; Is this over the copy length limit?
-        jp nc,copyBytesNoCheck          ; Skip following if not
-
-        sub copyByteSize
-        call copyBytes
-        ld a,copyByteSize               ; Fall through and execute original copy
-
-copyBytesNoCheck:
-        add a,a                         ; Double run length
-        cpl
-        add a,(copyByteSize * 2) - 1    ; Equivalent to subtracting from copyByteSize * 2
-        ld (copyBytesJump + 1),a        ; Store offset
-
-copyBytesJump:
-        jr $                            ; Jump into appropriate part (SMC)
-rept 30
-        ld (hl),b
-        inc l
-endm
-        ret
 
 
 
@@ -173,16 +184,24 @@ renderLineTextureLoad:
         ld b,$00                        ; Load texture byte (SMC)
         jr c,renderLineEdge             ; Jump ahead for edge handling
 
-        push af
+        add a,a                         ; Double run length
+        cpl
+        add a,(copyByteSize * 2) - 1    ; Equivalent to subtracting from copyByteSize * 2
+        ld (copyBytesJump + 1),a        ; Store offset
+
         ld a,e
         and b
         or (hl)
         ld (hl),a
         inc l
-        pop af
 
-        call copyBytesNoCheck
-        
+copyBytesJump:
+        jr $                            ; Jump into appropriate part (SMC)
+rept 30
+        ld (hl),b
+        inc l
+endm
+
         exx                             ; MAP SET ==============================
         ld a,(bc)
         exx                             ; LINE SET =============================
@@ -216,13 +235,10 @@ renderLineEdge:
         jr nz,renderLineEdgeSingle
 
 ; This is a double edge situation
-;       ld a,e                          ; Get old mask
-;       and b                           ; AND against texture byte
-;       or (hl)                         ; OR to the buffer
-;       ld (hl),a                       ; Store back in buffer
-; The commented code is included in the below call
-
-        call renderLineEdgeCore
+        ld a,e                          ; Get old mask
+        and b                           ; AND against texture byte
+        or (hl)                         ; OR to the buffer
+        ld (hl),a                       ; Store back in buffer
 
         inc l
 
