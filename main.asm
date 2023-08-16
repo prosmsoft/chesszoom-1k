@@ -130,6 +130,12 @@ demoLoop:
         ld de,$2300
         call renderLine
 
+textScroll:
+        ld hl,displayRoutine + 3
+        ld de,displayRoutine + 2
+        ld bc,31
+        ldir
+
 waitFrame:
         ld a,wrxDriver % 256            ; Address of driver for central display
 
@@ -138,7 +144,7 @@ waitFrame:
         cp ixl
         jr z,$-2                        ; Loop if we are at top part of display
 
-        jr demoLoop                     ; Just hit bottom of display - loop back
+        jp demoLoop                     ; Just hit bottom of display - loop back
 
 xPos:
         db 0
