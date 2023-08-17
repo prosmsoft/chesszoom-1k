@@ -1,0 +1,17 @@
+mult_h_e
+   ld d, 0  ; Combining the overhead and
+   sla  h ; optimised first iteration
+   sbc  a, a
+   and  e
+   ld l, a
+   
+   ld b, 7
+_loop:
+   add  hl, hl          
+   jr nc, $+3
+   add  hl, de
+   
+   djnz _loop
+   
+   ret
+

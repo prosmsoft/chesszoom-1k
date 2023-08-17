@@ -15,10 +15,13 @@
 copyByteSize: equ 30                    ; Must be AT LEAST 30 bytes (for row drawing routines)
 
 wrxGfx:         equ $4380               ; 256-byte store for graphics (8 rows, 32 byte each)
-rowTab:         equ $4360               ; 184-byte store for row indices
+rowTab:         equ $4369               ; 184-byte store for row indices
 stackPtr:       equ $4025               ; 29-byte stack
 edgeTab:        equ $4000               ; 8-byte edge table
 frameOffset:    equ $08
+
+lineWidth:      equ $4036
+xPos:           equ $4038
 
 ; DO NOT CHANGE AFTER BASIC+3 (=DFILE)
 basic   ld h,dfile/256                  ; highbyte of dfile
@@ -56,49 +59,88 @@ frames  dw 65535
 
 cdflag  db 64
 ; DO NOT CHANGE SYSVAR ABOVE!
-
 ; free codeable memory
+
+yPos:   dw 0
+xCoord: dw 0
+yCoord: dw 0
+
 demoLoop:
-        ld a,(xPos + 1)
+        ld a,(xCoord + 1)
         inc a
-        and $0f
-        ld (xPos + 1),a
+        ld (xCoord + 1),a
+
+        ld hl,$2100
+        ld (lineWidth),hl
+        ld a,(xCoord + 1)
+        sla a
+        ld e,a
+        call multiplyH_E
+        ld (xPos),hl
+
+;       ex de,hl
+;       ld a,(xCoord)
+;       ld h,a
+;       ld l,0
+
+;       or a
+;etLeftXPos:
+;       sbc hl,de
+;       jp nc,getLeftXPos
+;       add hl,de
+;       ld (xPos),hl
+
+;       ld hl,$5e00
+;       or a
+;etTopYPos:
+;       sbc hl,de
+;       jp nc,getTopYPos
+;       add hl,de
+;       ld (yPos),hl
 
         ld bc,$aa80
         ld a,b
         ld hl,(xPos)
-        ld de,$2300
+        ld de,(lineWidth)
         call renderLine
 
         ld bc,$aac0
         xor a
         ld hl,(xPos)
-        ld de,$2300
+        ld de,(lineWidth)
         call renderLine
 
         ld bc,$55a0
         ld a,b
         ld hl,(xPos)
-        ld de,$2300
+        ld de,(lineWidth)
         call renderLine
 
         ld bc,$55e0
         xor a
         ld hl,(xPos)
-        ld de,$2300
+        ld de,(lineWidth)
         call renderLine
 
-        ld a,$ff
-        ld bc,$ff60
-        ld hl,(xPos)
-        ld de,$2300
-        call renderLine
+        ld de,$0bff
+        exx
+        ld a,(xCoord + 1)
+        rlca
+        sbc a,a
+        ld bc,$ff69
+        ld hl,(yPos)
+        ld de,$4800
+        add hl,de
+        ld de,(lineWidth)
+        call renderLineShort
 
 textScroll:
         ld hl,displayRoutine + 3
         ld de,displayRoutine + 2
+        ld a,(de)
         ld bc,31
         ldir
+        ld (de),a
 
 waitFrame:
         ld a,wrxDriver % 256            ; Address of driver for central display
@@ -110,13 +152,35 @@ waitFrame:
 
         jp demoLoop                     ; Just hit bottom of display - loop back
 
-xPos:
-        dw 0
+
+
+multiplyH_E:
+        ld d,0                          ; Combining the overhead and
+        sla h                           ; optimised first iteration
+        sbc a,a
+        and e
+        ld l,a
+
+        ld b,7
+multiplyH_Eloop:
+        add hl,hl          
+        jr nc,$+3
+        add hl,de
+   
+        djnz multiplyH_Eloop
+   
+        ret
 
 
 
 renderLine:
 ; NOTE - PUT START HERE
+        exx
+        ld de,$02ff                     ; D holds initial left edge + 2,
+                                        ; E holds initial mask
+        exx
+
+renderLineShort:
         ld (renderLineTextureLoad + 1),a
         ld a,b
         ld (renderLineTextureSwap + 1),a
@@ -127,8 +191,6 @@ renderLine:
 
         exx
         ; Line set initialisation
-        ld de,$02ff                     ; D holds initial left edge + 2,
-                                        ; E holds initial mask
         ld h,$43
         ld l,a
 
