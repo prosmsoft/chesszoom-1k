@@ -64,31 +64,44 @@ cdflag  db 64
 yPos:   dw 0
 xCoord: dw 0
 yCoord: dw 0
+xCheck: db 0
 
 demoLoop:
-        ld a,(xCoord + 1)
-        inc a
-        ld (xCoord + 1),a
+        ;ld a,(xCoord + 1)
+        ;inc a
+        ;ld (xCoord + 1),a
 
-        ld hl,$2100
+        ld bc,0-128
+        ld hl,(lineWidth)
+        add hl,bc
+        ld a,$24
+        cp h
+        jr c,$+4
+        ld h,$ff
         ld (lineWidth),hl
+
         ld a,(xCoord + 1)
-        sla a
+        and $7f
         ld e,a
         call multiplyH_E
+        ld bc,$4000
+        add hl,bc
+
+        ld de,(lineWidth)
+        srl d
+        rr e
+        xor a
+getLeftXPos:
+        inc a
+        sbc hl,de
+        jp nc,getLeftXPos
+        add hl,de
+        add hl,hl
         ld (xPos),hl
-
-;       ex de,hl
-;       ld a,(xCoord)
-;       ld h,a
-;       ld l,0
-
-;       or a
-;etLeftXPos:
-;       sbc hl,de
-;       jp nc,getLeftXPos
-;       add hl,de
-;       ld (xPos),hl
+        rrca
+        ccf
+        sbc a,a
+        ld (xCheck),a
 
 ;       ld hl,$5e00
 ;       or a
@@ -99,25 +112,31 @@ demoLoop:
 ;       ld (yPos),hl
 
         ld bc,$aa80
-        ld a,b
+        ld a,(xCheck)
+        and b
         ld hl,(xPos)
         ld de,(lineWidth)
         call renderLine
 
         ld bc,$aac0
-        xor a
+        ld a,(xCheck)
+        cpl
+        and b
         ld hl,(xPos)
         ld de,(lineWidth)
         call renderLine
 
         ld bc,$55a0
-        ld a,b
+        ld a,(xCheck)
+        and b
         ld hl,(xPos)
         ld de,(lineWidth)
         call renderLine
 
         ld bc,$55e0
-        xor a
+        ld a,(xCheck)
+        cpl
+        and b
         ld hl,(xPos)
         ld de,(lineWidth)
         call renderLine
@@ -494,10 +513,9 @@ initDemo:
         ldir                            ; Copy the edge table to its lower location
 
         out ($fe),a                     ; Turn on NMI generator
-        ld hl,$4300
-        ld (hl),$80
-        ld l,$80
-        ld (hl),$80
+
+        ld hl,$ff00
+        ld (lineWidth),hl
 
         jp demoLoop
 
