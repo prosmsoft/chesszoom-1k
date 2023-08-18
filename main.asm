@@ -12,16 +12,23 @@
 ; in LOWRES more sysvar are used, but in this way the shortest code
 ; over sysvar to start machinecode. This saves 11 bytes of BASIC
 
+; Spare bytes: -- -- -- -- -- -- -- -- -- -- --
+;              -- 37 38 39 3A
+
 copyByteSize: equ 30                    ; Must be AT LEAST 30 bytes (for row drawing routines)
 
-wrxGfx:         equ $4380               ; 256-byte store for graphics (8 rows, 32 byte each)
-rowTab:         equ $4360               ; 184-byte store for row indices
-stackPtr:       equ $4025               ; 29-byte stack
-edgeTab:        equ $4000               ; 8-byte edge table
-frameOffset:    equ $08
-
-lineWidth:      equ $4036
-xPos:           equ $4038
+wrxGfx:         equ $4380               ; 128 byte store for graphics (8 rows, 32 byte each)
+rowTab:         equ $4360               ; 32 byte store for row indices
+stackPtr:       equ $4025               ; 28 byte stack
+edgeTab:        equ $4000               ; 8 byte edge table
+frameCount:     equ $4008               ; 1 byte - used to time text scroller
+xCheck:         equ $4029               ; 1 byte
+yCheck:         equ $4036               ; 1 byte
+xPos:           equ $402a               ; 2 bytes
+yPos:           equ $402c               ; 2 bytes
+xCoord:         equ $402e               ; 2 bytes
+yCoord:         equ $4030               ; 2 bytes
+lineWidth:      equ $4032               ; 2 bytes
 
 ; DO NOT CHANGE AFTER BASIC+3 (=DFILE)
 basic   ld h,dfile/256                  ; highbyte of dfile
@@ -61,11 +68,8 @@ cdflag  db 64
 ; DO NOT CHANGE SYSVAR ABOVE!
 ; free codeable memory
 
-yPos:   dw 0
-xCoord: dw 0
-yCoord: dw 0
-xCheck: db 0
-yCheck: db 0
+textOffset:
+        db $7f                          ; Address into string
 
 waitFrame:
         ld a,wrxDriver % 256            ; Address of driver for central display
@@ -154,51 +158,66 @@ endOfCase:
         ld bc,$aac0
         xor a
         ld hl,(xPos)
-        ld de,(lineWidth)
         call renderLine
 
         ld bc,$55a0
         ld a,b
         ld hl,(xPos)
-        ld de,(lineWidth)
         call renderLine
 
         ld bc,$55e0
         xor a
         ld hl,(xPos)
-        ld de,(lineWidth)
         call renderLine
 
         ld a,(xCoord + 1)
-
-        ld d,a
-        ld a,(xCheck)
-        xor d
-
-        ld d,a
-        ld a,(yCoord + 1)
-        xor d
-
-        ld d,a
-        ld a,(yCheck)
-        xor d
+        xor (iy + (xCheck - $4000))
+        xor (iy + (yCoord + 1 - $4000))
+        xor (iy + (yCheck - $4000))
 
         rlca
         sbc a,a
         ld bc,$ff60
         ld hl,(yPos)
-        ld de,(lineWidth)
         call renderLine
 
 textScroll:
+        ld a,(frameCount)
+        inc a
+        ld (frameCount),a
+
+        and $e0
+        jr nz,textScrollEnd
+
+textScrollDo:
+        ld a,(textOffset)
+        inc a
+        and $7f
+        ld (textOffset),a
+        add a,textData % 256
+        ld l,a
+        adc a,textData / 256
+        sub l
+        ld h,a
+
+        push hl                         ; Save off text pointer for later
+
         ld hl,displayRoutine + 3
         ld de,displayRoutine + 2
-        ld a,(de)
+        ld a,(de)                       ; Get character to be scrolled-out
         ld bc,31
-        ;;ldir
+        ldir                            ; Scroll text left
+
+        pop hl
+        ld b,(hl)
+        ld (hl),a                       ; Swap old text into buffer
+
+        ld a,b
         ld (de),a
 
+textScrollEnd:
         jp waitFrame                     ; Just hit bottom of display - loop back
+
 
 
 
@@ -223,12 +242,6 @@ multiplyH_Eloop:
 
 renderLine:
 ; NOTE - PUT START HERE
-        exx
-        ld de,$02ff                     ; D holds initial left edge + 2,
-                                        ; E holds initial mask
-        exx
-
-renderLineShort:
         ld (renderLineTextureLoad + 1),a
         ld a,b
         ld (renderLineTextureSwap + 1),a
@@ -239,6 +252,7 @@ renderLineShort:
 
         exx
         ; Line set initialisation
+        ld de,$02ff
         ld h,$43
         ld l,a
 
@@ -349,7 +363,8 @@ renderLineEdgeCore:
         and b                           ; AND against texture byte
         or (hl)                         ; OR to the buffer
         ld (hl),a                       ; Store back in buffer
-        
+
+        exx
         ret                             ; We're at the end of the line
 
 
@@ -484,11 +499,12 @@ wrxText:
 
         ld a,$76                        ; [ 7] 
         ld (displayRoutine + $22),a     ; [13] Patch in HALT instruction
-        dec (iy + frameOffset)          ; [23] Decrement FRAMES counter
 
-        ld b,2                          ; [ 7]
+        ld b,3                          ; [ 7]
         djnz $                          ; [21]
         dec hl                          ; [ 6] --- DELAY ---
+        inc hl
+        nop
 
 ; Total for following set-up section = 60
         ld bc,$0108                     ; [10] 1 row, 8 lines
@@ -514,6 +530,23 @@ displayRoutine:
 
         ret                             ; Exit from displayRoutine (SMC)
 
+textData:
+        ; ZX81 character encoding of ' HELLO TO DR BEEP, PAUL FARROW, '
+        db $00, $2d, $2a, $31, $31, $34, $00, $39, $34, $00, $29, $37, $00, $27, $2a, $2a
+        db $35, $1a, $00, $35, $26, $3a, $31, $00, $2b, $26, $37, $37, $34, $3c, $1a, $00
+
+        ; ZX81 character encoding of '  NOLLKOLLTROLL,  WILF RIGTER,  '
+        db $00, $00, $33, $34, $31, $31, $30, $34, $31, $31, $39, $37, $34, $31, $31, $1a
+        db $00, $00, $3c, $2e, $31, $2b, $00, $37, $2e, $2c, $39, $2a, $37, $1a, $00, $00
+
+        ; ZX81 character encoding of 'PLUS EVERYONE AT SINCLAIRZXWORLD'
+
+        db $35, $31, $3a, $38, $00, $2a, $3b, $2a, $37, $3e, $34, $33, $2a, $00, $26, $39
+        db $00, $38, $2e, $33, $28, $31, $26, $2e, $37, $3f, $3d, $3c, $34, $37, $31, $29
+
+        ; ZX81 character encoding of '   ...AND SPECTRUM COMPUTING.   '
+        db $00, $00, $00, $1b, $1b, $1b, $26, $33, $29, $00, $38, $35, $2a, $28, $39, $37
+        db $3a, $32, $00, $28, $34, $32, $35, $3a, $39, $2e, $33, $2c, $1b, $00, $00, $00
 
 
 IF ($ > rowTab)
@@ -523,33 +556,35 @@ ENDIF
 org rowTab
 
 initDemo:
+; Set up variables hidden in BASIC system area, clear out 
 ; Since this code is only run once, I've kept it in the graphics buffer, since
 ; it can be destroyed without consequence following execution
         out ($fd),a                     ; Turn off NMI generator
         out ($fd),a                     ; In case NMI triggered during last instruction
         ld sp,stackPtr                  ; Build stack downwards from row table
         ld ix,wrxDriver                 ; Set up pointer to our hi-res driver
-
-        ld hl,rowTab
-        ld de,rowTab + 1
-        ld bc,184 - 1
-        ld (hl),$00
-        ldir                            ; Clear the row table
+        out ($fe),a                     ; Turn on NMI generator
 
         ld hl,edgeTabTop
         ld de,edgeTab
-        ld c,8
-        ldir                            ; Copy the edge table to its lower location
-
-        out ($fe),a                     ; Turn on NMI generator
+        ld bc,9
+        ldir                            ; Copy the edge table to correct location
 
         ld hl,$5320
         ld (lineWidth),hl
+
+        ld hl,$0000
+        ld (xPos),hl
+        ld (yPos),hl
+        ld (xCoord),hl
+        ld (yCoord),hl
 
         jp waitFrame
 
 edgeTabTop:
         db $7f, $3f, $1f, $0f, $07, $03, $01, $00
+frameStart:
+        db $20
 
 ; the display file, Code the lines needed.
 dfile:  
