@@ -67,13 +67,13 @@ yCoord: dw 0
 xCheck: db 0
 
 demoLoop:
-        ;ld a,(xCoord + 1)
-        ;inc a
-        ;ld (xCoord + 1),a
+        ld a,(xCoord + 1)
+        inc a
+        ld (xCoord + 1),a
 
         ld bc,0-128
         ld hl,(lineWidth)
-        add hl,bc
+        ;add hl,bc
         ld a,$24
         cp h
         jr c,$+4
@@ -158,8 +158,16 @@ textScroll:
         ld de,displayRoutine + 2
         ld a,(de)
         ld bc,31
-        ldir
+        ;;ldir
         ld (de),a
+        
+        ld a,(xCheck)
+        and $80
+        ld (displayRoutine + 2),a
+
+        ld a,(xCoord + 1)
+        and $80
+        ld (displayRoutine + 3),a
 
 waitFrame:
         ld a,wrxDriver % 256            ; Address of driver for central display
@@ -514,7 +522,7 @@ initDemo:
 
         out ($fe),a                     ; Turn on NMI generator
 
-        ld hl,$ff00
+        ld hl,$7000
         ld (lineWidth),hl
 
         jp demoLoop
