@@ -73,15 +73,15 @@ textOffset:
         db $7f                          ; Address into string
 
 zoomLevelStart: equ $2100
-zoomVelStart:   equ $0300
+zoomVelStart:   equ 640
 
 zoomLevel:
-        dw $2100
+        dw zoomLevelStart
 
 zoomVel:
-        dw $0300
+        dw zoomVelStart
 
-zoomAccel:      equ 0-$0020
+zoomAccel:      equ 0 - 5
 
 waitFrame:
         ld a,wrxDriver % 256            ; Address of driver for central display
@@ -101,11 +101,11 @@ calcZoom:
         add hl,de
         ld a,$21 - 1
         cp h                            ; Are we over the max zoom level?
-        jr nc,calcZoomPostFix
+        jr c,calcZoomPostFix
 
-;        ld de,zoomVelStart
-;        ld (zoomVel),de
-;        ld hl,zoomLevelStart
+        ld de,zoomVelStart
+        ld (zoomVel),de
+        ld hl,zoomLevelStart
 
 calcZoomPostFix:
         ld (zoomLevel),hl
@@ -236,7 +236,7 @@ textScroll:
 textScrollDo:
         ld a,(textOffset)
         inc a
-        and $7f
+        and $3f
         ld (textOffset),a
         add a,textData % 256
         ld l,a
@@ -616,12 +616,12 @@ textData:
         db $00, $00, $3c, $2e, $31, $2b, $00, $37, $2e, $2c, $39, $2a, $37, $1a, $00, $00
 
         ; ZX81 character encoding of '  EVERYONE AT SINCLAIR ZX WORLD '
-        db $00, $00, $2a, $3b, $2a, $37, $3e, $34, $33, $2a, $00, $26, $39, $00, $38, $2e
-        db $33, $28, $31, $26, $2e, $37, $00, $3f, $3d, $00, $3c, $34, $37, $31, $29, $00
+;        db $00, $00, $2a, $3b, $2a, $37, $3e, $34, $33, $2a, $00, $26, $39, $00, $38, $2e
+;        db $33, $28, $31, $26, $2e, $37, $00, $3f, $3d, $00, $3c, $34, $37, $31, $29, $00
 
         ; ZX81 character encoding of '   ...AND SPECTRUM COMPUTING.   '
-        db $00, $00, $00, $1b, $1b, $1b, $26, $33, $29, $00, $38, $35, $2a, $28, $39, $37
-        db $3a, $32, $00, $28, $34, $32, $35, $3a, $39, $2e, $33, $2c, $1b, $00, $00, $00
+;        db $00, $00, $00, $1b, $1b, $1b, $26, $33, $29, $00, $38, $35, $2a, $28, $39, $37
+;        db $3a, $32, $00, $28, $34, $32, $35, $3a, $39, $2e, $33, $2c, $1b, $00, $00, $00
 
 
 
@@ -656,10 +656,10 @@ initDemo:
         ld (xCoord),hl
         ld (yCoord),hl
 
-        ld hl,$0300
+        ld hl,$0200
         ld (xCoordVel),hl
 
-        ld hl,$0030
+        ld hl,$0020
         ld (xCoordAccel),hl
 
         jp waitFrame
