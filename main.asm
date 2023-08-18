@@ -12,13 +12,10 @@
 ; in LOWRES more sysvar are used, but in this way the shortest code
 ; over sysvar to start machinecode. This saves 11 bytes of BASIC
 
-; Spare bytes: -- -- -- -- -- -- -- -- -- -- --
-;              -- 37 38 39 3A
+copyByteSize:   equ 30                  ; Must be AT LEAST 30 bytes (for row drawing routines)
+                                        ; There's no point having it larger than 30 either
+                                        ; since renderLine copies at most 30 bytes...
 
-copyByteSize: equ 30                    ; Must be AT LEAST 30 bytes (for row drawing routines)
-
-wrxGfx:         equ $4380               ; 128 byte store for graphics (8 rows, 32 byte each)
-rowTab:         equ $4360               ; 32 byte store for row indices
 stackPtr:       equ $4025               ; 28 byte stack
 edgeTab:        equ $4000               ; 8 byte edge table
 frameCount:     equ $4008               ; 1 byte - used to time text scroller
@@ -29,6 +26,10 @@ yPos:           equ $402c               ; 2 bytes
 xCoord:         equ $402e               ; 2 bytes
 yCoord:         equ $4030               ; 2 bytes
 lineWidth:      equ $4032               ; 2 bytes
+xCoordVel:      equ $4037               ; 2 bytes
+xCoordAccel:    equ $4039               ; 2 bytes
+wrxGfx:         equ $4380               ; 128 byte store for graphics (8 rows, 32 byte each)
+rowTab:         equ $4360               ; 32 byte store for row indices
 
 ; DO NOT CHANGE AFTER BASIC+3 (=DFILE)
 basic   ld h,dfile/256                  ; highbyte of dfile
@@ -71,6 +72,17 @@ cdflag  db 64
 textOffset:
         db $7f                          ; Address into string
 
+zoomLevelStart: equ $2100
+zoomVelStart:   equ $0300
+
+zoomLevel:
+        dw $2100
+
+zoomVel:
+        dw $0300
+
+zoomAccel:      equ 0-$0020
+
 waitFrame:
         ld a,wrxDriver % 256            ; Address of driver for central display
 
@@ -79,25 +91,93 @@ waitFrame:
         cp ixl
         jr z,$-2                        ; Loop if we are at top part of display
 
-demoLoop:
-        ld a,(xCoord + 1)
-        add a,1
-        ld (xCoord + 1),a
+calcZoom:
+        ld de,zoomAccel
+        ld hl,(zoomVel)
+        add hl,de
+        ld (zoomVel),hl
 
-        ld a,(yCoord + 1)
-        add a,1
-        ld (yCoord + 1),a
+        ld de,(zoomLevel)
+        add hl,de
+        ld a,$21 - 1
+        cp h                            ; Are we over the max zoom level?
+        jr nc,calcZoomPostFix
 
-        ld bc,0-256
-        ld hl,(lineWidth)
-        add hl,bc
-        ld a,$24
-        cp h
+;        ld de,zoomVelStart
+;        ld (zoomVel),de
+;        ld hl,zoomLevelStart
+
+calcZoomPostFix:
+        ld (zoomLevel),hl
+        ld c,h
+
+divide65536_C:
+; Divide 65536 (width of the screen * 256) by C.
+; Routine adapted from https://wikiti.brandonw.net/index.php?title=Z80_Routines:Math:Division
+; from the section "16/8 division". 
+        ld b,16
+        ld a,1
+        ld hl,$0000
+        cp c
         jr c,$+4
-        ld h,$ff
-        ld h,$25
+
+        sub c
+        inc l
+divide65536_Cloop:
+        add hl,hl
+        rla
+        jr c,$+5
+        cp c
+        jr c,$+4
+
+        sub c
+        inc l
+        djnz divide65536_Cloop
+
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+
         ld (lineWidth),hl
 
+calcPositions:
+; Calculate the positions and line width here
+        ld hl,(xCoordVel)
+        ld de,(xCoordAccel)
+        add hl,de
+        ld (xCoordVel),hl
+
+        ld a,h
+        call absVal
+        cp $0d
+        jr c,calcXCoord
+
+        ld a,d
+        cpl
+        ld d,a
+        ld a,e
+        neg
+        ld e,a
+        ld (xCoordAccel),de
+
+calcXCoord:
+        push hl
+        ld de,(yCoord)
+        add hl,de
+        ld (yCoord),hl
+        pop hl
+
+        ld de,$1000
+        add hl,de
+        srl h
+        rr l
+        ld de,(xCoord)
+        add hl,de
+        ld (xCoord),hl
+
+calcOffsets:
 ; X coord
         ld a,(xCoord + 1)
         ld b,$40
@@ -112,8 +192,7 @@ demoLoop:
         ld (yPos),hl
         ld (yCheck),a
 
-endOfCase:
-; Rendering
+drawLines:
         ld bc,$aa80
         ld a,b
         ld hl,(xPos)
@@ -185,12 +264,37 @@ textScrollEnd:
 
 
 
+absVal:
+        or a
+        ret p
+        neg
+        ret
+
+
+
 lineOffsetCalc:
         ld hl,(lineWidth)
         push bc
         and $7f
         ld e,a
-        call multiplyH_E
+
+multiplyH_E:
+; Adapted from https://wikiti.brandonw.net/index.php?title=Z80_Routines:Math:Multiplication
+; under the section "8*8 multiplication"
+        ld d,0                          ; Combining the overhead and
+        sla h                           ; optimised first iteration
+        sbc a,a
+        and e
+        ld l,a
+
+        ld b,7
+multiplyH_Eloop:
+        add hl,hl          
+        jr nc,$+3
+        add hl,de
+   
+        djnz multiplyH_Eloop
+
         pop bc
         ld c,$00
         add hl,bc
@@ -208,25 +312,6 @@ getEdgePos:
         rrca
         ccf
         sbc a,a
-        ret
-
-
-
-multiplyH_E:
-        ld d,0                          ; Combining the overhead and
-        sla h                           ; optimised first iteration
-        sbc a,a
-        and e
-        ld l,a
-
-        ld b,7
-multiplyH_Eloop:
-        add hl,hl          
-        jr nc,$+3
-        add hl,de
-   
-        djnz multiplyH_Eloop
-   
         ret
 
 
@@ -539,6 +624,7 @@ textData:
         db $3a, $32, $00, $28, $34, $32, $35, $3a, $39, $2e, $33, $2c, $1b, $00, $00, $00
 
 
+
 IF ($ > rowTab)
     .ERROR "Code not allowed to exceed rowTab"
 ENDIF
@@ -551,16 +637,17 @@ initDemo:
 ; it can be destroyed without consequence following execution
         out ($fd),a                     ; Turn off NMI generator
         out ($fd),a                     ; In case NMI triggered during last instruction
-        ld sp,stackPtr                  ; Build stack downwards from row table
+        ld sp,stackPtr                  ; Build stack within system variable area
         ld ix,wrxDriver                 ; Set up pointer to our hi-res driver
         out ($fe),a                     ; Turn on NMI generator
 
+; Now initialise the data and variables in the system variable area
         ld hl,edgeTabTop
         ld de,edgeTab
         ld bc,9
         ldir                            ; Copy the edge table to correct location
 
-        ld hl,$5320
+        ld hl,$2900
         ld (lineWidth),hl
 
         ld hl,$0000
@@ -568,6 +655,12 @@ initDemo:
         ld (yPos),hl
         ld (xCoord),hl
         ld (yCoord),hl
+
+        ld hl,$0300
+        ld (xCoordVel),hl
+
+        ld hl,$0030
+        ld (xCoordAccel),hl
 
         jp waitFrame
 
