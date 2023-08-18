@@ -15,7 +15,7 @@
 copyByteSize: equ 30                    ; Must be AT LEAST 30 bytes (for row drawing routines)
 
 wrxGfx:         equ $4380               ; 256-byte store for graphics (8 rows, 32 byte each)
-rowTab:         equ $4369               ; 184-byte store for row indices
+rowTab:         equ $4360               ; 184-byte store for row indices
 stackPtr:       equ $4025               ; 29-byte stack
 edgeTab:        equ $4000               ; 8-byte edge table
 frameOffset:    equ $08
@@ -65,19 +65,33 @@ yPos:   dw 0
 xCoord: dw 0
 yCoord: dw 0
 xCheck: db 0
+yCheck: db 0
+
+waitFrame:
+        ld a,wrxDriver % 256            ; Address of driver for central display
+
+        cp ixl
+        jr nz,$-2                       ; Loop if we are at bottom part of display
+        cp ixl
+        jr z,$-2                        ; Loop if we are at top part of display
 
 demoLoop:
         ld a,(xCoord + 1)
-        inc a
+        add a,1
         ld (xCoord + 1),a
 
-        ld bc,0-128
+        ld a,(yCoord + 1)
+        add a,1
+        ld (yCoord + 1),a
+
+        ld bc,0-256
         ld hl,(lineWidth)
         add hl,bc
         ld a,$24
         cp h
         jr c,$+4
         ld h,$ff
+        ld h,$25
         ld (lineWidth),hl
 
         ld a,(xCoord + 1)
@@ -103,14 +117,34 @@ getLeftXPos:
         sbc a,a
         ld (xCheck),a
 
-;       ld hl,$5e00
-;       or a
-;etTopYPos:
-;       sbc hl,de
-;       jp nc,getTopYPos
-;       add hl,de
-;       ld (yPos),hl
+; Y coord
+        ld hl,(lineWidth)
+        ld a,(yCoord + 1)
+        and $7f
+        ld e,a
+        call multiplyH_E
 
+        ld bc,$2e00
+        add hl,bc
+
+        ld de,(lineWidth)
+        srl d
+        rr e
+        xor a
+getTopYPos:
+        inc a
+        sbc hl,de
+        jp nc,getTopYPos
+        add hl,de
+        add hl,hl
+        ld (yPos),hl
+        rrca
+        ccf
+        sbc a,a
+        ld (yCheck),a
+
+endOfCase:
+; Rendering
         ld bc,$aa80
         ld a,b
         ld hl,(xPos)
@@ -135,20 +169,26 @@ getLeftXPos:
         ld de,(lineWidth)
         call renderLine
 
-        ld de,$0bff
-        exx
         ld a,(xCoord + 1)
+
         ld d,a
         ld a,(xCheck)
         xor d
+
+        ld d,a
+        ld a,(yCoord + 1)
+        xor d
+
+        ld d,a
+        ld a,(yCheck)
+        xor d
+
         rlca
         sbc a,a
-        ld bc,$ff69
+        ld bc,$ff60
         ld hl,(yPos)
-        ld de,$4800
-        add hl,de
         ld de,(lineWidth)
-        call renderLineShort
+        call renderLine
 
 textScroll:
         ld hl,displayRoutine + 3
@@ -157,24 +197,8 @@ textScroll:
         ld bc,31
         ;;ldir
         ld (de),a
-        
-        ld a,(xCheck)
-        and $80
-        ld (displayRoutine + 2),a
 
-        ld a,(xCoord + 1)
-        and $80
-        ld (displayRoutine + 3),a
-
-waitFrame:
-        ld a,wrxDriver % 256            ; Address of driver for central display
-
-        cp ixl
-        jr nz,$-2                       ; Loop if we are at bottom part of display
-        cp ixl
-        jr z,$-2                        ; Loop if we are at top part of display
-
-        jp demoLoop                     ; Just hit bottom of display - loop back
+        jp waitFrame                     ; Just hit bottom of display - loop back
 
 
 
@@ -522,7 +546,7 @@ initDemo:
         ld hl,$5320
         ld (lineWidth),hl
 
-        jp demoLoop
+        jp waitFrame
 
 edgeTabTop:
         db $7f, $3f, $1f, $0f, $07, $03, $01, $00
