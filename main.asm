@@ -73,7 +73,7 @@ demoLoop:
 
         ld bc,0-128
         ld hl,(lineWidth)
-        ;add hl,bc
+        add hl,bc
         ld a,$24
         cp h
         jr c,$+4
@@ -112,31 +112,25 @@ getLeftXPos:
 ;       ld (yPos),hl
 
         ld bc,$aa80
-        ld a,(xCheck)
-        and b
+        ld a,b
         ld hl,(xPos)
         ld de,(lineWidth)
         call renderLine
 
         ld bc,$aac0
-        ld a,(xCheck)
-        cpl
-        and b
+        xor a
         ld hl,(xPos)
         ld de,(lineWidth)
         call renderLine
 
         ld bc,$55a0
-        ld a,(xCheck)
-        and b
+        ld a,b
         ld hl,(xPos)
         ld de,(lineWidth)
         call renderLine
 
         ld bc,$55e0
-        ld a,(xCheck)
-        cpl
-        and b
+        xor a
         ld hl,(xPos)
         ld de,(lineWidth)
         call renderLine
@@ -144,6 +138,9 @@ getLeftXPos:
         ld de,$0bff
         exx
         ld a,(xCoord + 1)
+        ld d,a
+        ld a,(xCheck)
+        xor d
         rlca
         sbc a,a
         ld bc,$ff69
@@ -522,7 +519,7 @@ initDemo:
 
         out ($fe),a                     ; Turn on NMI generator
 
-        ld hl,$7000
+        ld hl,$5320
         ld (lineWidth),hl
 
         jp demoLoop
