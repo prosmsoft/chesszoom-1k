@@ -98,53 +98,18 @@ demoLoop:
         ld h,$25
         ld (lineWidth),hl
 
+; X coord
         ld a,(xCoord + 1)
-        and $7f
-        ld e,a
-        call multiplyH_E
-        ld bc,$4000
-        add hl,bc
-
-        ld de,(lineWidth)
-        srl d
-        rr e
-        xor a
-getLeftXPos:
-        inc a
-        sbc hl,de
-        jp nc,getLeftXPos
-        add hl,de
-        add hl,hl
+        ld b,$40
+        call lineOffsetCalc
         ld (xPos),hl
-        rrca
-        ccf
-        sbc a,a
         ld (xCheck),a
 
 ; Y coord
-        ld hl,(lineWidth)
         ld a,(yCoord + 1)
-        and $7f
-        ld e,a
-        call multiplyH_E
-
-        ld bc,$2e00
-        add hl,bc
-
-        ld de,(lineWidth)
-        srl d
-        rr e
-        xor a
-getTopYPos:
-        inc a
-        sbc hl,de
-        jp nc,getTopYPos
-        add hl,de
-        add hl,hl
+        ld b,$2e
+        call lineOffsetCalc
         ld (yPos),hl
-        rrca
-        ccf
-        sbc a,a
         ld (yCheck),a
 
 endOfCase:
@@ -218,6 +183,32 @@ textScrollDo:
 textScrollEnd:
         jp waitFrame                     ; Just hit bottom of display - loop back
 
+
+
+lineOffsetCalc:
+        ld hl,(lineWidth)
+        push bc
+        and $7f
+        ld e,a
+        call multiplyH_E
+        pop bc
+        ld c,$00
+        add hl,bc
+
+        ld de,(lineWidth)
+        srl d
+        rr e
+        xor a
+getEdgePos:
+        inc a
+        sbc hl,de
+        jp nc,getEdgePos
+        add hl,de
+        add hl,hl
+        rrca
+        ccf
+        sbc a,a
+        ret
 
 
 
@@ -539,10 +530,9 @@ textData:
         db $00, $00, $33, $34, $31, $31, $30, $34, $31, $31, $39, $37, $34, $31, $31, $1a
         db $00, $00, $3c, $2e, $31, $2b, $00, $37, $2e, $2c, $39, $2a, $37, $1a, $00, $00
 
-        ; ZX81 character encoding of 'PLUS EVERYONE AT SINCLAIRZXWORLD'
-
-        db $35, $31, $3a, $38, $00, $2a, $3b, $2a, $37, $3e, $34, $33, $2a, $00, $26, $39
-        db $00, $38, $2e, $33, $28, $31, $26, $2e, $37, $3f, $3d, $3c, $34, $37, $31, $29
+        ; ZX81 character encoding of '  EVERYONE AT SINCLAIR ZX WORLD '
+        db $00, $00, $2a, $3b, $2a, $37, $3e, $34, $33, $2a, $00, $26, $39, $00, $38, $2e
+        db $33, $28, $31, $26, $2e, $37, $00, $3f, $3d, $00, $3c, $34, $37, $31, $29, $00
 
         ; ZX81 character encoding of '   ...AND SPECTRUM COMPUTING.   '
         db $00, $00, $00, $1b, $1b, $1b, $26, $33, $29, $00, $38, $35, $2a, $28, $39, $37
