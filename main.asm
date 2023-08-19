@@ -19,8 +19,8 @@ copyByteSize:   equ 30                  ; Must be AT LEAST 30 bytes (for row dra
 stackPtr:       equ $4025               ; 28 byte stack
 edgeTab:        equ $4000               ; 8 byte edge table
 frameCount:     equ $4008               ; 1 byte - used to time text scroller
-xCheck:         equ $4029               ; 1 byte
-yCheck:         equ $4036               ; 1 byte
+textOffset:     equ $4029               ; 1 byte
+lineCheck:      equ $4036               ; 1 byte
 xPos:           equ $402a               ; 2 bytes
 yPos:           equ $402c               ; 2 bytes
 xCoord:         equ $402e               ; 2 bytes
@@ -69,11 +69,6 @@ cdflag  db 64
 ; DO NOT CHANGE SYSVAR ABOVE!
 ; free codeable memory
 
-textOffset:
-; Current offset into the text string
-        db $fe                          ; Guaranteed to reset to zero on
-                                        ; 1st iteration
-
 ; Zoom level equates
 ; Zoom is defined as an unsigned fixed point number with 3 integer bits and
 ; 13 fractional bits (U3.13 format). Only the most significant byte gets used in
@@ -88,6 +83,137 @@ zoomVel:
         dw zoomVelStart
 
 zoomAccel:      equ 0 - 5
+
+
+
+renderLine:
+; NOTE - PUT START HERE
+        ld (renderLineTextureLoad + 1),a
+        ld a,b
+        ld (renderLineTextureSwap + 1),a
+
+        ; Map set initialisation
+        ld b,$40
+        ld a,c
+
+        exx
+        ; Line set initialisation
+        ld de,$02ff
+        ld h,$43
+        ld l,a
+
+        ld (hl),0
+        exx
+renderLineLoop:
+        ld a,h
+        and 7
+        ld c,a                          ; Form address to edge table
+        ld a,h                          ; Copy right edge integer part
+
+        exx                             ; LINE SET =============================
+        
+        ld c,a                          ; Make temp. copy of X
+        rrca
+        rrca
+        rrca
+        and 31                          ; Get byte-wise position
+
+        ld b,a
+        inc b                           ; This will set the carry flag for lines
+        inc b                           ; with no run of bytes in the middle
+
+        sub d
+        ld d,b
+
+renderLineTextureLoad:
+        ld b,$00                        ; Load texture byte (SMC)
+        jr c,renderLineEdge             ; Jump ahead for edge handling
+
+        add a,a                         ; Double run length
+        cpl
+        add a,(copyByteSize * 2) - 1    ; Equivalent to subtracting from copyByteSize * 2
+        ld (copyBytesJump + 1),a        ; Store offset
+
+        ld a,e
+        and b
+        or (hl)
+        ld (hl),a
+        inc l
+
+copyBytesJump:
+        jr $                            ; Jump into appropriate part (SMC)
+rept 30
+        ld (hl),b
+        inc l
+endm
+
+        exx                             ; MAP SET ==============================
+        ld a,(bc)
+        exx                             ; LINE SET =============================
+        ld e,a
+        cpl
+        and b
+        ld (hl),a
+
+renderLineEndRun:
+; Texture swap here! XOR against old byte?
+        ld a,b
+renderLineTextureSwap:
+        xor $00                         ; (SMC)
+        ld (renderLineTextureLoad + 1),a
+
+        exx                             ; MAP SET ==============================
+
+        inc h
+        ret z                           ; Return if so
+        dec h
+
+        add hl,de
+        jr nc,renderLineLoop
+        
+        ld h,$ff
+        jr renderLineLoop
+
+renderLineEdge:
+; This branch handles lines made up of only two edges (9 - 16px)
+        inc a                           ; Just a single edge?
+        jr nz,renderLineEdgeSingle
+
+; This is a double edge situation
+        ld a,e                          ; Get old mask
+        and b                           ; AND against texture byte
+        or (hl)                         ; OR to the buffer
+        ld (hl),a                       ; Store back in buffer
+
+        inc l
+
+renderLineEdgeLeft:
+        exx                             ; MAP SET ==============================
+        ld a,(bc)                       ; Get new mask
+        exx                             ; LINE SET =============================
+
+        ld e,a                          ; Store new mask
+        cpl                             ; Invert mask
+        and b                           ; AND against graphic
+        ld (hl),a                       ; Load into buffer
+
+        jr renderLineEndRun
+
+renderLineEdgeSingle:
+        inc c
+        jr nz,renderLineEdgeLeft        ; Branch if edge on left hand side
+
+renderLineEdgeCore:
+; Possibility - hide this in BASIC system variables if memory gets tight?
+        ld a,e                          ; Get old mask
+        and b                           ; AND against texture byte
+        or (hl)                         ; OR to the buffer
+        ld (hl),a                       ; Store back in buffer
+
+        exx
+        ret                             ; We're at the end of the line
+
+
 
 waitFrame:
         ld a,wrxDriver % 256            ; Address of driver for central display
@@ -206,18 +332,20 @@ calcXCoord:
 
 calcOffsets:
 ; X coord
-        ld a,(xCoord + 1)
+        ld a,h
         ld b,$40
         call lineOffsetCalc
         ld (xPos),hl
-        ld (xCheck),a
+        ld (lineCheck),a
 
 ; Y coord
         ld a,(yCoord + 1)
         ld b,$2e
         call lineOffsetCalc
         ld (yPos),hl
-        ld (yCheck),a
+        xor (iy + (lineCheck - $4000))
+        rrca
+        push af
 
 drawLines:
 shadingPatchA1:
@@ -237,18 +365,18 @@ shadingPatchB1:
         ld bc,$55a0
         ld a,b
         ld hl,(xPos)
+        push hl
         call renderLine
 
 shadingPatchB2:
         ld bc,$55e0
         xor a
-        ld hl,(xPos)
+        pop hl
         call renderLine
 
-        ld a,(xCoord + 1)
-        xor (iy + (xCheck - $4000))
+        pop af
+        xor (iy + (xCoord + 1 - $4000))
         xor (iy + (yCoord + 1 - $4000))
-        xor (iy + (yCheck - $4000))
 
         rlca
         sbc a,a
@@ -267,16 +395,13 @@ textScroll:
 textScrollDo:
         ld a,(textOffset)
         inc a
-        cp 64
-        jr nc,$+3
+        cp 96
+        jr c,$+3
         xor a
 
         ld (textOffset),a
-        add a,textData % 256
         ld l,a
-        adc a,textData / 256
-        sub l
-        ld h,a
+        ld h,textData / 256
 
         push hl                         ; Save off text pointer for later
 
@@ -322,152 +447,20 @@ multiplyH_Eloop:
         djnz multiplyH_Eloop
 
         pop bc
-        ld c,$00
+        xor a
+        ld c,a
         add hl,bc
 
         ld de,(lineWidth)
         srl d
         rr e
-        xor a
 getEdgePos:
         inc a
         sbc hl,de
-        jp nc,getEdgePos
+        jr nc,getEdgePos
         add hl,de
         add hl,hl
-        rrca
-        ccf
-        sbc a,a
         ret
-
-
-
-renderLine:
-; NOTE - PUT START HERE
-        ld (renderLineTextureLoad + 1),a
-        ld a,b
-        ld (renderLineTextureSwap + 1),a
-
-        ; Map set initialisation
-        ld b,$40
-        ld a,c
-
-        exx
-        ; Line set initialisation
-        ld de,$02ff
-        ld h,$43
-        ld l,a
-
-        ld (hl),0
-        exx
-renderLineLoop:
-        ld a,h
-        and 7
-        ld c,a                          ; Form address to edge table
-        ld a,h                          ; Copy right edge integer part
-
-        exx                             ; LINE SET =============================
-        
-        ld c,a                          ; Make temp. copy of X
-        rrca
-        rrca
-        rrca
-        and 31                          ; Get byte-wise position
-
-        ld b,a
-        inc b                           ; This will set the carry flag for lines
-        inc b                           ; with no run of bytes in the middle
-
-        sub d
-        ld d,b
-
-renderLineTextureLoad:
-        ld b,$00                        ; Load texture byte (SMC)
-        jr c,renderLineEdge             ; Jump ahead for edge handling
-
-        add a,a                         ; Double run length
-        cpl
-        add a,(copyByteSize * 2) - 1    ; Equivalent to subtracting from copyByteSize * 2
-        ld (copyBytesJump + 1),a        ; Store offset
-
-        ld a,e
-        and b
-        or (hl)
-        ld (hl),a
-        inc l
-
-copyBytesJump:
-        jr $                            ; Jump into appropriate part (SMC)
-rept 30
-        ld (hl),b
-        inc l
-endm
-
-        exx                             ; MAP SET ==============================
-        ld a,(bc)
-        exx                             ; LINE SET =============================
-        ld e,a
-        cpl
-        and b
-        ld (hl),a
-
-renderLineEndRun:
-; Texture swap here! XOR against old byte?
-        ld a,b
-renderLineTextureSwap:
-        xor $00                         ; (SMC)
-        ld (renderLineTextureLoad + 1),a
-
-        exx                             ; MAP SET ==============================
-
-        ld a,255
-        cp h                            ; End of line?
-        ret z                           ; Return if so
-
-        add hl,de
-        jp nc,renderLineLoop
-        
-        ld h,a
-        jr renderLineLoop
-
-renderLineEdge:
-; This branch handles lines made up of only two edges (9 - 16px)
-        inc a                           ; Just a single edge?
-        jr nz,renderLineEdgeSingle
-
-; This is a double edge situation
-        ld a,e                          ; Get old mask
-        and b                           ; AND against texture byte
-        or (hl)                         ; OR to the buffer
-        ld (hl),a                       ; Store back in buffer
-
-        inc l
-
-renderLineEdgeLeft:
-        exx                             ; MAP SET ==============================
-        ld a,(bc)                       ; Get new mask
-        exx                             ; LINE SET =============================
-
-        ld e,a                          ; Store new mask
-        cpl                             ; Invert mask
-        and b                           ; AND against graphic
-        ld (hl),a                       ; Load into buffer
-
-        jr renderLineEndRun
-
-renderLineEdgeSingle:
-        inc c
-        jr nz,renderLineEdgeLeft        ; Branch if edge on left hand side
-
-renderLineEdgeCore:
-; Possibility - hide this in BASIC system variables if memory gets tight?
-        ld a,e                          ; Get old mask
-        and b                           ; AND against texture byte
-        or (hl)                         ; OR to the buffer
-        ld (hl),a                       ; Store back in buffer
-
-        exx
-        ret                             ; We're at the end of the line
 
 
 
@@ -480,20 +473,17 @@ wrxDriver:
 ;   - Load appropriate registers
 ; TODO: Consider moving LD HL to top, then LD A,nn to LD A,H
         di                              ; [ 4] WRX needs interrupts off
-        ld a,wrxGfx / 256               ; [ 7] 
+        ld hl,rowTab                    ; [10] Load row table pointer
+        ld a,h                          ; [ 4]
         ld i,a                          ; [ 9] Point to RAM for WRX display
 
         ld a,$c9                        ; [ 7]
         ld (displayRoutine + $22),a     ; [13] Patch in RET instruction
 
-        ld hl,rowTab - 1                ; [10] Load row table pointer
-        inc hl                          ; [ 6] --- DELAY ---
+                                        ;  47  T-STATES so far
 
-                                        ;  50  T-STATES so far
-
-        ld b,$03                        ; [ 7]
-        djnz $                          ; [34]
-        nop                             ; [ 4] --- DELAY ---
+        ld b,$04                        ; [ 7]
+        djnz $                          ; [47] --- DELAY ---
 
         ld b,$17                        ; [ 7] 23 rows of 8 pixels
         ld de,$8202                     ; [10] TODO: COMMENT THIS
@@ -634,6 +624,25 @@ displayRoutine:
 
         ret                             ; Exit from displayRoutine (SMC)
 
+
+
+shadingTable:
+        db $42, $55, $aa
+        db $36, $ee, $55
+        db $2f, $dd, $77
+        db $27, $77, $dd
+        db $00, $ff, $ff
+
+
+
+IF ($ >= $4300)
+    .ERROR "Code not allowed to exceed $4300"
+ENDIF
+
+
+
+org $4300                               ; Keep text in top page
+
 textData:
         ; ZX81 character encoding of ' HELLO TO DR BEEP, PAUL FARROW, '
         db $00, $2d, $2a, $31, $31, $34, $00, $39, $34, $00, $29, $37, $00, $27, $2a, $2a
@@ -643,29 +652,11 @@ textData:
         db $00, $00, $33, $34, $31, $31, $30, $34, $31, $31, $39, $37, $34, $31, $31, $1a
         db $00, $00, $3c, $2e, $31, $2b, $00, $37, $2e, $2c, $39, $2a, $37, $1a, $00, $00
 
-        ; ZX81 character encoding of '  EVERYONE AT SINCLAIR ZX WORLD '
-;        db $00, $00, $2a, $3b, $2a, $37, $3e, $34, $33, $2a, $00, $26, $39, $00, $38, $2e
-;        db $33, $28, $31, $26, $2e, $37, $00, $3f, $3d, $00, $3c, $34, $37, $31, $29, $00
-
-        ; ZX81 character encoding of '   ...AND SPECTRUM COMPUTING.   '
-;        db $00, $00, $00, $1b, $1b, $1b, $26, $33, $29, $00, $38, $35, $2a, $28, $39, $37
-;        db $3a, $32, $00, $28, $34, $32, $35, $3a, $39, $2e, $33, $2c, $1b, $00, $00, $00
+        ; ZX81 character encoding of 'SINCLAIR ZX WORLD AND SC FORUMS.'
+        db $38, $2e ,$33, $28, $31, $26, $2e, $37, $00, $3f, $3d, $00, $3c, $34, $37, $31
+        db $29, $00, $26, $33, $29, $00, $38, $28, $00, $2b, $34, $37, $3a, $32, $38, $1b
 
 
-
-shadingTable:
-        db $40, $55, $aa
-        db $36, $ee, $55
-        db $2e, $dd, $77
-        db $27, $77, $dd
-        db $00, $ff, $ff
-
-
-IF ($ > rowTab)
-    .ERROR "Code not allowed to exceed rowTab"
-ENDIF
-
-org rowTab
 
 initDemo:
 ; Set up variables hidden in BASIC system area, clear out 
@@ -697,6 +688,9 @@ initDemo:
 
         ld hl,$0020
         ld (xCoordAccel),hl
+
+        ld (iy + (textOffset - $4000)),$fe
+        ; This will be clipped to 0 on 1st iteration
 
         jp waitFrame
 
