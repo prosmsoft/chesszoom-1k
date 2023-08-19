@@ -70,8 +70,14 @@ cdflag  db 64
 ; free codeable memory
 
 textOffset:
-        db $7f                          ; Address into string
+; Current offset into the text string
+        db $fe                          ; Guaranteed to reset to zero on
+                                        ; 1st iteration
 
+; Zoom level equates
+; Zoom is defined as an unsigned fixed point number with 3 integer bits and
+; 13 fractional bits (U3.13 format). Only the most significant byte gets used in
+; the line width calculation, ignoring the 8 least significant bits.
 zoomLevelStart: equ $2100
 zoomVelStart:   equ 640
 
@@ -137,10 +143,29 @@ divide65536_Cloop:
         add hl,hl
         add hl,hl
         add hl,hl
-        add hl,hl
-        add hl,hl
+        add hl,hl                       ; Scale up by 32 to account for division
+        add hl,hl                       ; by fixed point number (U3.5)
 
         ld (lineWidth),hl
+
+shadingCalc:
+        ld hl,shadingTable - 2
+
+shadingCalcloop:
+        inc hl
+        inc hl
+        ld a,(hl)
+        cp c
+        inc hl
+        jr nc,shadingCalcloop
+
+        ld a,(hl)
+        ld (shadingPatchA1 + 2),a
+        ld (shadingPatchA2 + 2),a
+        inc hl
+        ld a,(hl)
+        ld (shadingPatchB1 + 2),a
+        ld (shadingPatchB2 + 2),a
 
 calcPositions:
 ; Calculate the positions and line width here
@@ -150,7 +175,9 @@ calcPositions:
         ld (xCoordVel),hl
 
         ld a,h
-        call absVal
+        or a
+        jp p,$+5
+        neg
         cp $0d
         jr c,calcXCoord
 
@@ -169,9 +196,9 @@ calcXCoord:
         ld (yCoord),hl
         pop hl
 
-        ld de,$1000
+        ld de,$0800
         add hl,de
-        srl h
+        sra h
         rr l
         ld de,(xCoord)
         add hl,de
@@ -193,22 +220,26 @@ calcOffsets:
         ld (yCheck),a
 
 drawLines:
+shadingPatchA1:
         ld bc,$aa80
         ld a,b
         ld hl,(xPos)
         ld de,(lineWidth)
         call renderLine
 
+shadingPatchA2:
         ld bc,$aac0
         xor a
         ld hl,(xPos)
         call renderLine
 
+shadingPatchB1:
         ld bc,$55a0
         ld a,b
         ld hl,(xPos)
         call renderLine
 
+shadingPatchB2:
         ld bc,$55e0
         xor a
         ld hl,(xPos)
@@ -236,7 +267,10 @@ textScroll:
 textScrollDo:
         ld a,(textOffset)
         inc a
-        and $3f
+        cp 64
+        jr nc,$+3
+        xor a
+
         ld (textOffset),a
         add a,textData % 256
         ld l,a
@@ -261,14 +295,6 @@ textScrollDo:
 
 textScrollEnd:
         jp waitFrame                     ; Just hit bottom of display - loop back
-
-
-
-absVal:
-        or a
-        ret p
-        neg
-        ret
 
 
 
@@ -478,6 +504,8 @@ wrxLoop:
         rlc c                           ; [ 8] Get next bit off line
         rra                             ; [ 4] A holds fd000001
         rrca                            ; [ 4] A holds 1fd00000
+                                        ; N.B. d stands for dither,
+                                        ;      f represents bit from line data
                                         ;  30  T-STATES since loop label
 
         call displayRoutine + $8000     ; [17] Call the WRX display routine
@@ -623,6 +651,14 @@ textData:
 ;        db $00, $00, $00, $1b, $1b, $1b, $26, $33, $29, $00, $38, $35, $2a, $28, $39, $37
 ;        db $3a, $32, $00, $28, $34, $32, $35, $3a, $39, $2e, $33, $2c, $1b, $00, $00, $00
 
+
+
+shadingTable:
+        db $40, $55, $aa
+        db $36, $ee, $55
+        db $2e, $dd, $77
+        db $27, $77, $dd
+        db $00, $ff, $ff
 
 
 IF ($ > rowTab)
