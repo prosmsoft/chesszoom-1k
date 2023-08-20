@@ -1,33 +1,26 @@
 ; CHESSZOOM 1K, for the 1K ZX81
 ; File derived from Dr. Beep's optimal lowres ZX81 machine code template
 
-; N.B. Lines marked (SMC) are self-modifying code
-
-; Gamecoding course ZX81 machinecode
-; Base model for optimal ZX81 code in lowres 
-; 12 bytes from #4000 to #400B free reuseble for own "variables"
+; N.B. Lines marked (SMC) indicate self-modifying code
 
     org #4009
 
-; in LOWRES more sysvar are used, but in this way the shortest code
-; over sysvar to start machinecode. This saves 11 bytes of BASIC
-
-copyByteSize:   equ 30                  ; Must be AT LEAST 30 bytes (for row drawing routines)
-                                        ; There's no point having it larger than 30 either
-                                        ; since renderLine copies at most 30 bytes...
-
-stackPtr:       equ $4025               ; 28 byte stack
+; Addresses of data stored within BASIC system variables
+stackPtr:       equ $4025               ; 28 byte stack - since NMI routine will put as much as 20
+                                        ;     bytes on stack, we only have 8 for our user program
+                                        ;     (turns out this only uses 6 bytes max.)
 edgeTab:        equ $4000               ; 8 byte edge table
 frameCount:     equ $4008               ; 1 byte - used to time text scroller
-textOffset:     equ $4029               ; 1 byte
-lineCheck:      equ $4036               ; 1 byte
-xPos:           equ $402a               ; 2 bytes
-yPos:           equ $402c               ; 2 bytes
-xCoord:         equ $402e               ; 2 bytes
-yCoord:         equ $4030               ; 2 bytes
-lineWidth:      equ $4032               ; 2 bytes
-xCoordVel:      equ $4037               ; 2 bytes
-xCoordAccel:    equ $4039               ; 2 bytes
+textOffset:     equ $4029               ; 1 byte - offset into text data
+lineCheck:      equ $4036               ; 1 byte - holds which block we are on when subtracting
+                                        ;          lineWidth from centre of screen
+xPos:           equ $402a               ; 2 bytes - offset into 1st line from left side of screen
+yPos:           equ $402c               ; 2 bytes - offset into 1st line from top of screen
+xCoord:         equ $402e               ; 2 bytes - X position of camera (bit 15 holds integer part)
+yCoord:         equ $4030               ; 2 bytes - Y position of camera (bit 15 holds integer part)
+lineWidth:      equ $4032               ; 2 bytes - width of line on screen
+coordVel:       equ $4037               ; 2 bytes - velocity of coordinate movement
+coordAccel:     equ $4039               ; 2 bytes - acceleration of coordinate movement
 wrxGfx:         equ $4380               ; 128 byte store for graphics (8 rows, 32 byte each)
 rowTab:         equ $4360               ; 32 byte store for row indices
 
@@ -69,40 +62,39 @@ cdflag  db 64
 ; DO NOT CHANGE SYSVAR ABOVE!
 ; free codeable memory
 
-; Zoom level equates
-; Zoom is defined as an unsigned fixed point number with 3 integer bits and
+; Depth level equates
+; Depth is defined as an unsigned fixed point number with 3 integer bits and
 ; 13 fractional bits (U3.13 format). Only the most significant byte gets used in
 ; the line width calculation, ignoring the 8 least significant bits.
-zoomLevelStart: equ $2100
-zoomVelStart:   equ 640
+depthLevelStart: equ $2100
+depthVelStart:   equ 640
 
-zoomLevel:
-        dw zoomLevelStart
+depthLevel:
+        dw depthLevelStart
 
-zoomVel:
-        dw zoomVelStart
+depthVel:
+        dw depthVelStart
 
-zoomAccel:      equ 0 - 5
+depthAccel:      equ 0 - 5
 
 
 
 renderLine:
-; NOTE - PUT START HERE
         ld (renderLineTextureLoad + 1),a
         ld a,b
         ld (renderLineTextureSwap + 1),a
 
         ; Map set initialisation
-        ld b,$40
+        ld b,$40                        ; MSB of edge table pointer
         ld a,c
 
         exx
         ; Line set initialisation
         ld de,$02ff
-        ld h,$43
-        ld l,a
+        ld h,$43                        ; MSB of graphics pointer
+        ld l,a                          ; LSB of graphics pointer
 
-        ld (hl),0
+        ld (hl),0                       ; Clear out first column of line
         exx
 renderLineLoop:
         ld a,h
@@ -131,7 +123,7 @@ renderLineTextureLoad:
 
         add a,a                         ; Double run length
         cpl
-        add a,(copyByteSize * 2) - 1    ; Equivalent to subtracting from copyByteSize * 2
+        add a,(30 * 2) - 1              ; Equivalent to subtracting from 30 * 2
         ld (copyBytesJump + 1),a        ; Store offset
 
         ld a,e
@@ -156,7 +148,6 @@ endm
         ld (hl),a
 
 renderLineEndRun:
-; Texture swap here! XOR against old byte?
         ld a,b
 renderLineTextureSwap:
         xor $00                         ; (SMC)
@@ -164,7 +155,7 @@ renderLineTextureSwap:
 
         exx                             ; MAP SET ==============================
 
-        inc h
+        inc h                           ; End of line?
         ret z                           ; Return if so
         dec h
 
@@ -216,38 +207,43 @@ renderLineEdgeCore:
 
 
 waitFrame:
-        ld a,wrxDriver % 256            ; Address of driver for central display
+; Wait until we are just past the graphics (central) part of the display, so that we have both
+; the lower and upper parts of the border to do our rendering in for the next frame.
+        ld a,wrxDriver % 256            ; Address of driver for graphics display
 
         cp ixl
         jr nz,$-2                       ; Loop if we are at bottom part of display
         cp ixl
         jr z,$-2                        ; Loop if we are at top part of display
 
-calcZoom:
-        ld de,zoomAccel
-        ld hl,(zoomVel)
+calcdepth:
+        ld de,depthAccel
+        ld hl,(depthVel)
         add hl,de
-        ld (zoomVel),hl
+        ld (depthVel),hl
 
-        ld de,(zoomLevel)
+        ld de,(depthLevel)
         add hl,de
         ld a,$21 - 1
-        cp h                            ; Are we over the max zoom level?
-        jr c,calcZoomPostFix
+        cp h
+        jr c,calcdepthPostFix           ; Branch if over the max depth level
 
-        ld de,zoomVelStart
-        ld (zoomVel),de
-        ld hl,zoomLevelStart
+; Reset depth level and velocity
+        ld de,depthVelStart
+        ld (depthVel),de
+        ld hl,depthLevelStart
 
-calcZoomPostFix:
-        ld (zoomLevel),hl
+calcdepthPostFix:
+        ld (depthLevel),hl
         ld c,h
 
 divide65536_C:
-; Divide 65536 (width of the screen * 256) by C.
+; Divide 65536 (width of the screen * 256) by C. This gives us the width of each block
+; of the chessboard.
 ; Routine adapted from https://wikiti.brandonw.net/index.php?title=Z80_Routines:Math:Division
 ; from the section "16/8 division". 
         ld b,16
+; First (fixed) iteration
         ld a,1
         ld hl,$0000
         cp c
@@ -278,50 +274,58 @@ shadingCalc:
         ld hl,shadingTable - 2
 
 shadingCalcloop:
+        inc hl                          ; Skip past graphics bytes
         inc hl
-        inc hl
-        ld a,(hl)
-        cp c
-        inc hl
-        jr nc,shadingCalcloop
+        ld a,(hl)                       ; Get depth comparator
+        cp c                            ; Large enough to match this level?
+        inc hl                          ; Point to 1st graphic byte
+        jr nc,shadingCalcloop           ; Loop back if not
 
-        ld a,(hl)
+; We hit a match on this shading level. Patch drawLines with the graphics bytes
+        ld a,(hl)                       ; Get 1st graphic byte
         ld (shadingPatchA1 + 2),a
         ld (shadingPatchA2 + 2),a
         inc hl
-        ld a,(hl)
+        ld a,(hl)                       ; Get 2nd graphic byte
         ld (shadingPatchB1 + 2),a
         ld (shadingPatchB2 + 2),a
 
-calcPositions:
+calcCoordVelocity:
 ; Calculate the positions and line width here
-        ld hl,(xCoordVel)
-        ld de,(xCoordAccel)
+        ld hl,(coordVel)
+        ld de,(coordAccel)
         add hl,de
-        ld (xCoordVel),hl
+        ld (coordVel),hl
 
+; Get absolute value
         ld a,h
         or a
         jp p,$+5
         neg
+
+; Clip coordinate velocity by reversing acceleration
         cp $0d
-        jr c,calcXCoord
+        jr c,calcCoords
 
         ld a,d
         cpl
         ld d,a
         ld a,e
-        neg
+        cpl
         ld e,a
-        ld (xCoordAccel),de
+        inc de
+        ld (coordAccel),de
 
-calcXCoord:
-        push hl
+calcCoords:
+; First, calculate the Y coordinate
+        push hl                         ; Preserve velocity
         ld de,(yCoord)
         add hl,de
+        inc hl                          ; Slight offset to nudge path upwards
         ld (yCoord),hl
-        pop hl
+        pop hl                          ; Retrieve velocity
 
+; Now handle X coordinate
         ld de,$0800
         add hl,de
         sra h
@@ -332,15 +336,15 @@ calcXCoord:
 
 calcOffsets:
 ; X coord
-        ld a,h
-        ld b,$40
+        ld a,h                          ; Get MSB of X coordinate
+        ld b,$40                        ; 128 (horizontal centre) / 2
         call lineOffsetCalc
         ld (xPos),hl
         ld (lineCheck),a
 
 ; Y coord
         ld a,(yCoord + 1)
-        ld b,$2e
+        ld b,$2e                        ; 92 (vertical centre) / 2
         call lineOffsetCalc
         ld (yPos),hl
         xor (iy + (lineCheck - $4000))
@@ -374,12 +378,13 @@ shadingPatchB2:
         pop hl
         call renderLine
 
-        pop af
+; Render the row index line.
+        pop af                          ; Get lineCheck XOR result
         xor (iy + (xCoord + 1 - $4000))
-        xor (iy + (yCoord + 1 - $4000))
+        xor (iy + (yCoord + 1 - $4000)) ; XOR against integer bit of coordinates
 
-        rlca
-        sbc a,a
+        rlca                            ; Check MSB
+        sbc a,a                         ; $ff when carry set, $00 otherwise
         ld bc,$ff60
         ld hl,(yPos)
         call renderLine
@@ -397,7 +402,7 @@ textScrollDo:
         inc a
         cp 96
         jr c,$+3
-        xor a
+        xor a                           ; Reset pointer if past end of buffer
 
         ld (textOffset),a
         ld l,a
@@ -416,17 +421,17 @@ textScrollDo:
         ld (hl),a                       ; Swap old text into buffer
 
         ld a,b
-        ld (de),a
+        ld (de),a                       ; Copy character from buffer to display
 
 textScrollEnd:
-        jp waitFrame                     ; Just hit bottom of display - loop back
+        jp waitFrame                    ; Just hit bottom of display - loop back
 
 
 
 lineOffsetCalc:
         ld hl,(lineWidth)
-        push bc
-        and $7f
+        push bc                         ; Save centre offset
+        and $7f                         ; Mask off integer part of coordinate
         ld e,a
 
 multiplyH_E:
@@ -440,20 +445,21 @@ multiplyH_E:
 
         ld b,7
 multiplyH_Eloop:
-        add hl,hl          
+        add hl,hl
         jr nc,$+3
         add hl,de
    
         djnz multiplyH_Eloop
 
-        pop bc
+        pop bc                          ; Retrieve offset component
         xor a
         ld c,a
         add hl,bc
 
         ld de,(lineWidth)
         srl d
-        rr e
+        rr e                            ; Half the line width
+
 getEdgePos:
         inc a
         sbc hl,de
@@ -627,15 +633,15 @@ displayRoutine:
 
 
 shadingTable:
-        db $42, $55, $aa
+        db $42, $55, $aa                ; 50% checkerboard shading
         db $36, $ee, $55
         db $2f, $dd, $77
         db $27, $77, $dd
-        db $00, $ff, $ff
+        db $00, $ff, $ff                ; Solid black
 
 
 
-IF ($ >= $4300)
+IF ($ > $4300)
     .ERROR "Code not allowed to exceed $4300"
 ENDIF
 
@@ -656,12 +662,13 @@ textData:
         db $38, $2e ,$33, $28, $31, $26, $2e, $37, $00, $3f, $3d, $00, $3c, $34, $37, $31
         db $29, $00, $26, $33, $29, $00, $38, $28, $00, $2b, $34, $37, $3a, $32, $38, $1b
 
-
+org rowTab
 
 initDemo:
-; Set up variables hidden in BASIC system area, clear out 
+; Set up display driver, stack pointer, and overwrite BASIC system variables
+; with our own variables and data.
 ; Since this code is only run once, I've kept it in the graphics buffer, since
-; it can be destroyed without consequence following execution
+; it can be destroyed without consequence following execution.
         out ($fd),a                     ; Turn off NMI generator
         out ($fd),a                     ; In case NMI triggered during last instruction
         ld sp,stackPtr                  ; Build stack within system variable area
@@ -684,10 +691,10 @@ initDemo:
         ld (yCoord),hl
 
         ld hl,$0200
-        ld (xCoordVel),hl
+        ld (coordVel),hl
 
         ld hl,$0020
-        ld (xCoordAccel),hl
+        ld (coordAccel),hl
 
         ld (iy + (textOffset - $4000)),$fe
         ; This will be clipped to 0 on 1st iteration
@@ -707,4 +714,5 @@ dfile:
     
 vars    db 128
 last    equ $       
+
 
